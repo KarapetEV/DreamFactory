@@ -76,9 +76,21 @@
 	     - если запись всё же не прошла — лок остаётся, данные откатываются к
 	       последнему автосейву, п.5 разблокирует профиль. Дюпа нет.
 
-	7. Один сервер, быстрый реджойн: пока старый ReleaseProfile того же UserId в
-	   полёте, LoadProfile ждёт его завершения (releasingUserIds), иначе новая
-	   загрузка могла бы прочитать данные до финальной записи.
+	7. Лок принадлежит конкретной ЗАГРУЗКЕ, а не серверу: каждый вызов LoadProfile
+	   генерирует свой LoadId (GUID), и все проверки владения сравнивают именно его.
+	   Два профиля одного UserId на одном сервере (реджойн, двойной PlayerAdded)
+	   для DataStore различимы: релиз старого профиля не может снять лок нового,
+	   а новая загрузка не примет лок старого за свой.
+
+	   Плюс на одном сервере операции над одним UserId строго последовательны:
+	     - loadingUserIds — реестр загрузок «в полёте»: вторая загрузка того же
+	       UserId ждёт, пока первая завершится или отменится;
+	     - releasingUserIds — релизы в полёте: загрузка ждёт финальной записи,
+	       иначе прочитала бы данные до неё;
+	     - если игрок ушёл во время загрузки, релиз регистрируется в
+	       releasingUserIds синхронно, ДО task.spawn и до снятия отметки о загрузке,
+	       поэтому между «загрузка закончилась» и «релиз начался» нет окна, в
+	       которое успела бы проскочить следующая загрузка.
 
 	8. Сериализация операций над одним профилем внутри сервера (busy-мьютекс):
 	   автосейв и релиз не перекрываются. Иначе автосейв, стартовавший до релиза,
@@ -105,6 +117,8 @@ export type Profile = {
 	-- Живые данные игрока. Системы меняют их на месте, запись в DataStore делает этот сервис.
 	Data: PlayerProfile,
 	SessionLoadCount: number,
+	-- GUID этой загрузки = Meta.ActiveSession.LoadId в DataStore (п.7).
+	LoadId: string,
 	-- false после ReleaseProfile или потери лока: профиль больше нельзя ни менять, ни писать.
 	Active: boolean,
 }
@@ -118,7 +132,10 @@ export type InitOptions = {
 }
 
 type SessionTag = {
-	SessionId: string,
+	-- Уникален для каждого вызова LoadProfile — по нему проверяется владение локом.
+	LoadId: string,
+	-- Процесс сервера — только для диагностики (какой сервер держит лок).
+	ServerId: string,
 	PlaceId: number,
 	JobId: string,
 }
@@ -145,13 +162,8 @@ local RELEASE_RETRY_DELAY = 2
 
 local SHUTDOWN_TIMEOUT = 25
 
--- Уникальный id этого процесса сервера. Не используем game.JobId напрямую: в Studio
--- он пустой, и две Studio-сессии считали бы лок друг друга своим.
-local SESSION: SessionTag = {
-	SessionId = HttpService:GenerateGUID(false),
-	PlaceId = game.PlaceId,
-	JobId = game.JobId,
-}
+-- Id процесса сервера для диагностики. game.JobId в Studio пустой, поэтому свой GUID.
+local SERVER_ID = HttpService:GenerateGUID(false)
 
 local ProfileStoreService = {}
 
@@ -162,7 +174,9 @@ local onSessionLost: ((player: Player) -> ())? = nil
 
 local profiles: { [Player]: Profile } = {}
 local busyProfiles: { [Profile]: boolean } = {}
-local releasingUserIds: { [number]: boolean } = {}
+-- Операции «в полёте» по UserId на этом сервере (п.7).
+local loadingUserIds: { [number]: boolean } = {}
+local releasingUserIds: { [number]: number } = {}
 local pendingReleases = 0
 local shuttingDown = false
 
@@ -204,9 +218,9 @@ local function waitForBudget()
 	end
 end
 
-local function isOwnedByThisSession(meta: any): boolean
+local function isOwnedByLoad(meta: any, loadId: string): boolean
 	local lock = meta.ActiveSession
-	return type(lock) == "table" and lock.SessionId == SESSION.SessionId
+	return type(lock) == "table" and lock.LoadId == loadId
 end
 
 local function isValidRecord(record: any): boolean
@@ -249,9 +263,9 @@ local function writeProfile(profile: Profile, release: boolean): WriteResult
 		local outcome: WriteResult = "Failed"
 		local ok, err = pcall(function()
 			getStore():UpdateAsync(profile.Key, function(record: any)
-				if not isValidRecord(record) or not isOwnedByThisSession(record.Meta) then
+				if not isValidRecord(record) or not isOwnedByLoad(record.Meta, profile.LoadId) then
 					outcome = "SessionLost"
-					return nil -- отмена записи: ключ принадлежит другому серверу
+					return nil -- отмена записи: ключ принадлежит другой загрузке (другой сервер или новый профиль)
 				end
 
 				record.Data = profile.Data
@@ -280,10 +294,14 @@ local function writeProfile(profile: Profile, release: boolean): WriteResult
 	return "Failed"
 end
 
-local function releaseInternal(profile: Profile)
+-- Синхронная (без yield) регистрация релиза. Вызывается до любого task.spawn/yield,
+-- чтобы следующая загрузка того же UserId гарантированно увидела релиз в полёте (п.7).
+local function beginRelease(profile: Profile)
 	pendingReleases += 1
-	releasingUserIds[profile.UserId] = true
+	releasingUserIds[profile.UserId] = (releasingUserIds[profile.UserId] or 0) + 1
+end
 
+local function finishRelease(profile: Profile)
 	acquireBusy(profile) -- дожидаемся автосейва в полёте (п.8)
 
 	if profile.Active then
@@ -298,8 +316,14 @@ local function releaseInternal(profile: Profile)
 
 	releaseBusy(profile)
 
-	releasingUserIds[profile.UserId] = nil
+	local remaining = (releasingUserIds[profile.UserId] or 1) - 1
+	releasingUserIds[profile.UserId] = if remaining > 0 then remaining else nil
 	pendingReleases -= 1
+end
+
+local function releaseInternal(profile: Profile)
+	beginRelease(profile)
+	finishRelease(profile)
 end
 
 function ProfileStoreService.Init(options: InitOptions)
@@ -328,22 +352,18 @@ function ProfileStoreService.Init(options: InitOptions)
 	store = realStore
 end
 
-function ProfileStoreService.LoadProfile(player: Player): Profile?
-	local existing = profiles[player]
-	if existing then
-		return existing
-	end
-
-	local makeDefault = createDefaultData
-	assert(makeDefault, "ProfileStoreService.Init не был вызван")
-
+-- Цикл попыток захвата лока. Вызывается только из LoadProfile, когда UserId уже
+-- отмечен в loadingUserIds.
+local function loadInternal(player: Player, makeDefault: () -> PlayerProfile): Profile?
 	local userId = player.UserId
 	local key = KEY_PREFIX .. tostring(userId)
-
-	-- п.7: сначала дожидаемся релиза этого же UserId на этом же сервере.
-	while releasingUserIds[userId] and player.Parent ~= nil do
-		task.wait(0.1)
-	end
+	local loadId = HttpService:GenerateGUID(false)
+	local sessionTag: SessionTag = {
+		LoadId = loadId,
+		ServerId = SERVER_ID,
+		PlaceId = game.PlaceId,
+		JobId = game.JobId,
+	}
 
 	for attempt = 1, MAX_LOAD_ATTEMPTS do
 		if shuttingDown or player.Parent == nil then
@@ -378,7 +398,8 @@ function ProfileStoreService.LoadProfile(player: Player): Profile?
 				end
 
 				local meta = record.Meta
-				if meta.ActiveSession ~= nil and not isOwnedByThisSession(meta) then
+				-- Лок чужой, даже если его поставил этот же сервер другой загрузкой (п.7).
+				if meta.ActiveSession ~= nil and not isOwnedByLoad(meta, loadId) then
 					local lockAge = now - (tonumber(meta.LastUpdate) or 0)
 					if lockAge < STALE_LOCK_SECONDS and not forceSteal then
 						outcome = "Locked"
@@ -387,7 +408,7 @@ function ProfileStoreService.LoadProfile(player: Player): Profile?
 					-- п.5: лок брошен или ждать больше нельзя — перехватываем.
 				end
 
-				meta.ActiveSession = SESSION
+				meta.ActiveSession = sessionTag
 				meta.LastUpdate = now
 				meta.SessionLoadCount = (tonumber(meta.SessionLoadCount) or 0) + 1
 
@@ -404,12 +425,15 @@ function ProfileStoreService.LoadProfile(player: Player): Profile?
 				Key = key,
 				Data = loadedRecord.Data,
 				SessionLoadCount = loadedRecord.Meta.SessionLoadCount,
+				LoadId = loadId,
 				Active = true,
 			}
 
 			if player.Parent == nil or shuttingDown then
 				-- Игрок ушёл / сервер выключается, пока шла загрузка: лок уже наш — сразу отдаём.
-				task.spawn(releaseInternal, profile)
+				-- beginRelease синхронно, ДО task.spawn и до снятия loadingUserIds (п.7).
+				beginRelease(profile)
+				task.spawn(finishRelease, profile)
 				return nil
 			end
 
@@ -429,6 +453,46 @@ function ProfileStoreService.LoadProfile(player: Player): Profile?
 	end
 
 	return nil
+end
+
+function ProfileStoreService.LoadProfile(player: Player): Profile?
+	local existing = profiles[player]
+	if existing then
+		return existing
+	end
+
+	local makeDefault = createDefaultData
+	assert(makeDefault, "ProfileStoreService.Init не был вызван")
+
+	local userId = player.UserId
+
+	-- п.7: дожидаемся и загрузки, и релиза этого же UserId на этом же сервере.
+	while (loadingUserIds[userId] or releasingUserIds[userId]) and player.Parent ~= nil do
+		task.wait(0.1)
+	end
+
+	if player.Parent == nil then
+		return nil
+	end
+
+	-- Повторный вызов для того же Player (например, двойной PlayerAdded): пока ждали,
+	-- первая загрузка уже могла завершиться — отдаём её профиль, второй лок не берём.
+	existing = profiles[player]
+	if existing then
+		return existing
+	end
+
+	-- Между выходом из цикла ожидания и этой строкой нет yield — отметка атомарна.
+	loadingUserIds[userId] = true
+	local ok, result = pcall(loadInternal, player, makeDefault)
+	loadingUserIds[userId] = nil
+
+	if not ok then
+		warn(`[ProfileStoreService] Ошибка загрузки профиля {userId}: {result}`)
+		return nil
+	end
+
+	return result
 end
 
 function ProfileStoreService.GetProfile(player: Player): Profile?

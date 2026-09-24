@@ -29,6 +29,8 @@ src/
 └── tests/               # юнит-тесты чистых модулей экономики
 ```
 
+Тесты вне Studio: `lune run src/tests/run` из корня репозитория (lune ставится через rokit: `rokit add lune-org/lune`). Раннер подхватывает все `src/tests/*.spec.luau`; обвязка с подменой `game`/`task`/DataStore — `src/tests/lib/Harness.luau`.
+
 Rojo-проект: [default.project.json](default.project.json).
 
 ## Субагенты

@@ -36,7 +36,7 @@ local STORE_NAME = "PlayerProfiles"
 local AUTOSAVE_INTERVAL = 4 * 60
 
 -- Поднимать на 1 при любом изменении структуры PlayerProfile + добавлять миграцию ниже.
-local CURRENT_SCHEMA_VERSION = 1
+local CURRENT_SCHEMA_VERSION = 2
 
 --[[
 	MIGRATIONS[n] переводит данные со SchemaVersion n на n + 1, мутируя таблицу на месте.
@@ -45,6 +45,7 @@ local CURRENT_SCHEMA_VERSION = 1
 
 	0 → 1: запись без SchemaVersion (до введения версионирования). Структура совпадает
 	с v1, всё недостающее дозаполнит reconcile().
+	1 → 2: добавлено Factory.RawFragments (буфер сырых фрагментов) — дозаполнит reconcile().
 
 	Пример на будущее:
 	[1] = function(data)
@@ -54,6 +55,7 @@ local CURRENT_SCHEMA_VERSION = 1
 ]]
 local MIGRATIONS: { [number]: (data: any) -> () } = {
 	[0] = function(_data: any) end,
+	[1] = function(_data: any) end,
 }
 
 for version = 0, CURRENT_SCHEMA_VERSION - 1 do
@@ -109,6 +111,7 @@ function DataSystem.BuildDefaultProfile(): PlayerProfile
 		Factory = {
 			Level = start.FactoryLevel,
 			StorageCapacity = start.StorageCapacity,
+			RawFragments = 0,
 			ConveyorSpeedLevel = start.ConveyorSpeedLevel,
 			Decor = {},
 		},

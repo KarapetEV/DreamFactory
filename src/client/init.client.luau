@@ -1,5 +1,5 @@
 --!strict
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Controllers = script.Controllers
 
-return nil
+require(Controllers.CollectionController).Init()

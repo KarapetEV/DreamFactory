@@ -7,6 +7,8 @@ export type PlayerProfile = {
 	Factory: {
 		Level: number,
 		StorageCapacity: number,
+		-- Буфер «сырых» фрагментов снов (наполняет CollectionSystem, разбирает FactorySystem).
+		RawFragments: number,
 		ConveyorSpeedLevel: number,
 		Decor: { string },
 	},

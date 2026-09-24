@@ -50,4 +50,4 @@ export type PlayerProfile = {
 	},
 }
 
-return nil
+return {}

@@ -7,3 +7,4 @@ local Systems = ServerScriptService.server.Systems
 -- DataSystem первым: остальные системы получают данные игрока через DataSystem.GetData/WaitForData.
 require(Systems.DataSystem).Init()
 require(Systems.CollectionSystem).Init()
+require(Systems.FactorySystem).Init()

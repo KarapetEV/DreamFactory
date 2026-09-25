@@ -6,9 +6,10 @@
 	- Сервер по таймеру спавнит фрагменты (анкеренные Part) в зонах из CollectionConfig
 	  в Workspace.DreamFragments; клиент их только видит и присылает intent RequestCollect(fragmentId).
 	- Клиенту не доверяем ничего, кроме id: позиция фрагмента берётся из серверного реестра,
-	  позиция игрока — из его персонажа на сервере, радиус/кулдаун/ёмкость — из профиля и конфига.
+	  позиция игрока — из его персонажа на сервере, радиус/кулдаун/ёмкость — из уровней профиля
+	  и UpgradeConfig (UpgradeEffects зажимает уровень в [0, MaxLevel] — эффект не растёт без предела).
 	- Сбор — одна функция без yield между проверками и записью: фрагмент забирает ровно один игрок,
-	  буфер не выходит за StorageCapacity.
+	  буфер не выходит за ёмкость склада.
 ]]
 
 local Players = game:GetService("Players")
@@ -19,7 +20,9 @@ local Types = require(ReplicatedStorage.shared.Types)
 local Remotes = require(ReplicatedStorage.shared.Remotes)
 local BiomeConfig = require(ReplicatedStorage.shared.Config.BiomeConfig)
 local CollectionConfig = require(ReplicatedStorage.shared.Config.CollectionConfig)
+local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
 local DataSystem = require(script.Parent.DataSystem)
+local RateLimiter = require(script.Parent.Parent.Services.RateLimiter)
 
 type PlayerProfile = Types.PlayerProfile
 
@@ -68,30 +71,6 @@ local function getPlayerState(player: Player): PlayerState
 		playerStates[player] = state
 	end
 	return state
-end
-
--- Простой rate limit по таблице меток времени. true — запрос можно обрабатывать.
-local function passesRateLimit(state: PlayerState, now: number): boolean
-	local times = state.RequestTimes
-	local windowStart = now - CollectionConfig.RequestWindow
-
-	local kept = 0
-	for _, t in times do
-		if t > windowStart then
-			kept += 1
-			times[kept] = t
-		end
-	end
-	for i = #times, kept + 1, -1 do
-		times[i] = nil
-	end
-
-	if kept >= CollectionConfig.MaxRequestsPerWindow then
-		return false
-	end
-
-	times[kept + 1] = now
-	return true
 end
 
 -- Учёт отклонённых запросов. Достижение порога за окно — запись подозрительной активности
@@ -195,15 +174,17 @@ local function spawnTick(folder: Folder)
 	end
 end
 
+-- Радиус не больше значения на MaxLevel: уровень из профиля зажимается в UpgradeEffects (M-1).
 local function getCollectRadius(data: PlayerProfile): number
-	return CollectionConfig.BaseCollectRadius + data.Collection.RadiusLevel * CollectionConfig.RadiusPerLevel
+	return UpgradeEffects.GetEffectValue("CollectionRadius", data.Collection.RadiusLevel)
 end
 
 local function getCooldown(data: PlayerProfile): number
-	return math.max(
-		CollectionConfig.MinCooldown,
-		CollectionConfig.BaseCooldown - data.Collection.SpeedLevel * CollectionConfig.CooldownReductionPerLevel
-	)
+	return UpgradeEffects.GetEffectValue("CollectionSpeed", data.Collection.SpeedLevel)
+end
+
+local function getStorageCapacity(data: PlayerProfile): number
+	return UpgradeEffects.GetEffectValue("StorageCapacity", data.Factory.StorageCapacityLevel)
 end
 
 -- Единая транзакция сбора: проверки и запись без yield. Возвращает nil при успехе
@@ -240,7 +221,7 @@ local function tryCollect(player: Player, fragmentId: unknown, now: number): str
 		return "too-far"
 	end
 
-	local space = data.Factory.StorageCapacity - data.Factory.RawFragments
+	local space = getStorageCapacity(data) - data.Factory.RawFragments
 	if space <= 0 then
 		return "storage-full" -- фрагмент остаётся в мире
 	end
@@ -255,7 +236,7 @@ local function onRequestCollect(player: Player, fragmentId: unknown)
 	local now = os.clock()
 	local state = getPlayerState(player)
 
-	if not passesRateLimit(state, now) then
+	if not RateLimiter.Allow(state.RequestTimes, now, CollectionConfig.RequestWindow, CollectionConfig.MaxRequestsPerWindow) then
 		registerReject(player, "rate-limit", now)
 		return
 	end

@@ -7,7 +7,7 @@
 export type StartingProfileDefinition = {
 	Essence: number,
 	FactoryLevel: number,
-	StorageCapacity: number,
+	StorageCapacityLevel: number,
 	ConveyorSpeedLevel: number,
 	CollectionRadiusLevel: number,
 	CollectionSpeedLevel: number,
@@ -20,7 +20,7 @@ export type StartingProfileDefinition = {
 local StartingProfileConfig: StartingProfileDefinition = {
 	Essence = 0,
 	FactoryLevel = 1,
-	StorageCapacity = 100,
+	StorageCapacityLevel = 0,
 	ConveyorSpeedLevel = 0,
 	CollectionRadiusLevel = 0,
 	CollectionSpeedLevel = 0,

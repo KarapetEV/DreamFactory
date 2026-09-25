@@ -6,7 +6,9 @@ export type PlayerProfile = {
 	},
 	Factory: {
 		Level: number,
-		StorageCapacity: number,
+		-- Уровни апгрейдов (0..MaxLevel из UpgradeConfig). Ёмкость/скорость/радиус — не хранятся,
+		-- сервер вычисляет их из уровня и конфига (UpgradeEffects).
+		StorageCapacityLevel: number,
 		-- Буфер «сырых» фрагментов снов (наполняет CollectionSystem, разбирает FactorySystem).
 		RawFragments: number,
 		ConveyorSpeedLevel: number,

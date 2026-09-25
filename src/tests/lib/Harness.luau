@@ -80,6 +80,8 @@ function Harness.NewWorld()
 	-- Задержки (виртуальные секунды) для следующих вызовов UpdateAsync, по одной на вызов.
 	self.StoreDelays = {} :: { number }
 	self.Warnings = {} :: { string }
+	-- Что возвращает Players:GetPlayers() внутри мира.
+	self.Players = {} :: { any }
 	self._sleeping = {} :: { { at: number, seq: number, co: thread } }
 	self._seq = 0
 	self._guid = 0
@@ -192,7 +194,7 @@ function World:_makeEnv(moduleCache: { [string]: any }, scriptPath: string?): { 
 			PlayerAdded = signal,
 			PlayerRemoving = signal,
 			GetPlayers = function()
-				return {}
+				return table.clone(world.Players)
 			end,
 		},
 	}
@@ -266,6 +268,16 @@ function World:NewServer(onSessionLost: ((player: any) -> ())?): (any, any)
 		OnSessionLost = onSessionLost,
 	})
 	return profileStore, dataSystem
+end
+
+-- Загружает модуль проекта со свежим кэшем; overrides — подмена зависимостей по пути
+-- (например, { ["src/shared/Remotes"] = fakeRemotes }), чтобы тестировать систему без Instance.
+function World:LoadModule(path: string, overrides: { [string]: any }?): any
+	local cache = {}
+	for overridePath, module in overrides or {} do
+		cache[overridePath] = module
+	end
+	return self:_loadModule(path, cache)
 end
 
 Harness.DeepCopy = deepCopy

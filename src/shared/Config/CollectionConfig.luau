@@ -15,12 +15,9 @@ export type CollectionDefinition = {
 	SpawnInterval: number, -- секунд между тиками спавна (в каждой зоне за тик — не больше SpawnPerTick)
 	SpawnPerTick: number,
 	FragmentValue: number, -- сколько «сырых фрагментов» даёт один фрагмент снов
-	BaseCollectRadius: number, -- studs
-	RadiusPerLevel: number, -- прибавка к радиусу за Collection.RadiusLevel
+	-- Радиус сбора и кулдаун по уровням Collection.RadiusLevel/SpeedLevel — в UpgradeConfig
+	-- (CollectionRadius/CollectionSpeed), с явным MaxLevel.
 	DistanceTolerance: number, -- запас на лаг между позицией клиента и сервера
-	BaseCooldown: number, -- секунд между успешными сборами одного игрока
-	CooldownReductionPerLevel: number, -- уменьшение за Collection.SpeedLevel
-	MinCooldown: number,
 	-- Rate limiting: не больше MaxRequestsPerWindow вызовов RequestCollect за RequestWindow секунд.
 	RequestWindow: number,
 	MaxRequestsPerWindow: number,
@@ -34,12 +31,7 @@ local CollectionConfig: CollectionDefinition = {
 	SpawnInterval = 3,
 	SpawnPerTick = 2,
 	FragmentValue = 1,
-	BaseCollectRadius = 12,
-	RadiusPerLevel = 2,
 	DistanceTolerance = 4,
-	BaseCooldown = 0.3,
-	CooldownReductionPerLevel = 0.03,
-	MinCooldown = 0.05,
 	RequestWindow = 1,
 	MaxRequestsPerWindow = 10,
 	SuspiciousRejectThreshold = 30,

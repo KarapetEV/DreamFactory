@@ -36,7 +36,7 @@ local STORE_NAME = "PlayerProfiles"
 local AUTOSAVE_INTERVAL = 4 * 60
 
 -- Поднимать на 1 при любом изменении структуры PlayerProfile + добавлять миграцию ниже.
-local CURRENT_SCHEMA_VERSION = 2
+local CURRENT_SCHEMA_VERSION = 3
 
 --[[
 	MIGRATIONS[n] переводит данные со SchemaVersion n на n + 1, мутируя таблицу на месте.
@@ -46,6 +46,10 @@ local CURRENT_SCHEMA_VERSION = 2
 	0 → 1: запись без SchemaVersion (до введения версионирования). Структура совпадает
 	с v1, всё недостающее дозаполнит reconcile().
 	1 → 2: добавлено Factory.RawFragments (буфер сырых фрагментов) — дозаполнит reconcile().
+	2 → 3: Factory.StorageCapacity (готовое число) заменено на Factory.StorageCapacityLevel —
+	ёмкость вычисляется из уровня и UpgradeConfig (M-4). До S4 покупки апгрейдов не было,
+	поэтому сохранённая ёмкость всегда равна стартовой = BaseValue уровня 0: старое поле
+	удаляем, StorageCapacityLevel = 0 дозаполнит reconcile().
 
 	Пример на будущее:
 	[1] = function(data)
@@ -56,6 +60,11 @@ local CURRENT_SCHEMA_VERSION = 2
 local MIGRATIONS: { [number]: (data: any) -> () } = {
 	[0] = function(_data: any) end,
 	[1] = function(_data: any) end,
+	[2] = function(data: any)
+		if type(data.Factory) == "table" then
+			data.Factory.StorageCapacity = nil
+		end
+	end,
 }
 
 for version = 0, CURRENT_SCHEMA_VERSION - 1 do
@@ -110,7 +119,7 @@ function DataSystem.BuildDefaultProfile(): PlayerProfile
 		},
 		Factory = {
 			Level = start.FactoryLevel,
-			StorageCapacity = start.StorageCapacity,
+			StorageCapacityLevel = start.StorageCapacityLevel,
 			RawFragments = 0,
 			ConveyorSpeedLevel = start.ConveyorSpeedLevel,
 			Decor = {},

@@ -19,6 +19,14 @@
 	  того же запроса (двойной клик, ретрай) отклоняется, двойного списания нет;
 	- все проверки и запись — одна функция без yield. Эффект применяется записью уровня:
 	  ёмкость/скорость/радиус вычисляются из него на каждое обращение (UpgradeEffects).
+
+	Снимок для HUD (Remotes.EconomySnapshot, раздел 5.8):
+	- владельцу уходит только его Essence, RawFragments и уровни апгрейдов — ничего о других игроках;
+	- на тике сравнивается с последним отправленным: первый снимок после загрузки профиля
+	  и смена уровней — сразу, изменение только Essence/RawFragments — не чаще SnapshotInterval.
+	  Сравнение, а не отправка из мест записи, ловит изменения из любых систем;
+	- ответ на каждый PurchaseUpgrade, прошедший rate limit, — снимок с PurchaseAck сразу:
+	  клиент по нему разблокирует кнопку и берёт следующий targetLevel только из снимка.
 ]]
 
 local Players = game:GetService("Players")
@@ -43,6 +51,9 @@ type PlayerState = {
 	RejectWindowStart: number,
 	CorruptionReported: boolean, -- предупреждение о битом профиле уже записано
 	TickErrorReported: boolean, -- предупреждение об ошибке тика конвейера уже записано
+	-- Последний отправленный клиенту снимок (nil — ещё не отправляли) и момент отправки.
+	SentSnapshot: Types.EconomySnapshot?,
+	SentSnapshotAt: number,
 }
 
 local REJECT_LOG_WINDOW = 60
@@ -87,6 +98,8 @@ local function getPlayerState(player: Player): PlayerState
 			RejectWindowStart = 0,
 			CorruptionReported = false,
 			TickErrorReported = false,
+			SentSnapshot = nil,
+			SentSnapshotAt = -math.huge,
 		}
 		playerStates[player] = state
 	end
@@ -211,11 +224,68 @@ local function tryPurchase(player: Player, upgradeId: unknown, targetLevel: unkn
 	return nil
 end
 
+local function buildSnapshot(data: PlayerProfile, purchaseAck: string?): Types.EconomySnapshot
+	local levels: { [string]: number } = {}
+	for id, track in UpgradeConfig do
+		levels[id] = getLevel(data, track.Id)
+	end
+	return {
+		Essence = data.Currency.Essence,
+		RawFragments = data.Factory.RawFragments,
+		Levels = levels,
+		PurchaseAck = purchaseAck,
+	}
+end
+
+-- Равенство чисел, где NaN == NaN: битое значение не должно слаться на каждом тике.
+local function sameNumber(a: number, b: number): boolean
+	return a == b or (a ~= a and b ~= b)
+end
+
+local function sendSnapshot(player: Player, state: PlayerState, snapshot: Types.EconomySnapshot, now: number)
+	state.SentSnapshot = snapshot
+	state.SentSnapshotAt = now
+	Remotes.EconomySnapshot:FireClient(player, snapshot)
+end
+
+-- Отправка снимка, если он изменился: уровни — сразу, Essence/RawFragments — не чаще SnapshotInterval.
+local function syncSnapshot(player: Player, data: PlayerProfile, now: number)
+	local state = getPlayerState(player)
+	local snapshot = buildSnapshot(data, nil)
+	local sent = state.SentSnapshot
+
+	local dirty = sent == nil
+	if sent then
+		for id, level in snapshot.Levels do
+			if not sameNumber(level, sent.Levels[id]) then
+				dirty = true
+				break
+			end
+		end
+		if
+			not dirty
+			and (
+				not sameNumber(snapshot.Essence, sent.Essence)
+				or not sameNumber(snapshot.RawFragments, sent.RawFragments)
+			)
+			and now - state.SentSnapshotAt >= FactoryConfig.SnapshotInterval
+		then
+			dirty = true
+		end
+	end
+
+	if dirty then
+		sendSnapshot(player, state, snapshot, now)
+	end
+end
+
 local function onPurchaseUpgrade(player: Player, upgradeId: unknown, targetLevel: unknown)
 	local now = os.clock()
 	local state = getPlayerState(player)
 
 	if not RateLimiter.Allow(state.RequestTimes, now, FactoryConfig.RequestWindow, FactoryConfig.MaxRequestsPerWindow) then
+		-- Без ответа: клиент разблокирует кнопку по таймауту. Ответ на каждый отброшенный
+		-- запрос дал бы спамеру усиление исходящего трафика.
 		registerReject(player, "rate-limit", now)
 		return
 	end
@@ -223,6 +293,14 @@ local function onPurchaseUpgrade(player: Player, upgradeId: unknown, targetLevel
 	local reason = tryPurchase(player, upgradeId, targetLevel)
 	if reason then
 		registerReject(player, reason, now)
+	end
+
+	-- Ответ — и на успех, и на отказ: подтверждённое состояние, по которому клиент
+	-- разблокирует кнопку. PurchaseAck — только валидный id из конфига, не эхо строки клиента.
+	local data = DataSystem.GetData(player)
+	if data then
+		local ack = if type(upgradeId) == "string" and UpgradeEffects.GetTrack(upgradeId) then upgradeId else nil
+		sendSnapshot(player, state, buildSnapshot(data, ack), now)
 	end
 end
 
@@ -277,6 +355,7 @@ local function conveyorTick()
 			local data = DataSystem.GetData(player)
 			if data then
 				runConveyor(player, data, now)
+				syncSnapshot(player, data, now)
 			end
 		end)
 		if not ok then

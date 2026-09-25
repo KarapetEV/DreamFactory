@@ -23,6 +23,7 @@ local function setup()
 	local data = dataSystem.BuildDefaultProfile()
 	local profiles = { [player] = data }
 	local handler
+	local snapshots = {} -- { Player, Snapshot } в порядке FireClient
 
 	local factory = world:LoadModule("src/server/Systems/FactorySystem", {
 		["src/server/Systems/DataSystem"] = {
@@ -38,6 +39,11 @@ local function setup()
 						handler = fn
 					end,
 				},
+			},
+			EconomySnapshot = {
+				FireClient = function(_self, target, snapshot)
+					table.insert(snapshots, { Player = target, Snapshot = Harness.DeepCopy(snapshot) })
+				end,
 			},
 		},
 	})
@@ -55,6 +61,7 @@ local function setup()
 		Data = data,
 		Factory = factory,
 		Produced = produced,
+		Snapshots = snapshots,
 		Upgrades = world:LoadModule("src/shared/Config/UpgradeConfig"),
 		Effects = world:LoadModule("src/shared/UpgradeEffects"),
 		DataSystem = dataSystem,
@@ -365,6 +372,137 @@ test("Signal: Disconnect отписывает обработчик", function()
 	connection:Disconnect()
 	signal:Fire(5)
 	assert(calls == 2 and connection.Connected == false)
+end)
+
+------------------------------------------------------------------------------------------
+-- Снимок экономики для HUD (Remotes.EconomySnapshot)
+------------------------------------------------------------------------------------------
+
+test("Снимок: первый уходит сразу после загрузки профиля — Essence и 4 уровня", function()
+	local t = setup()
+	t.Data.Currency.Essence = 42
+	t.Data.Factory.RawFragments = 0
+	t.Data.Collection.RadiusLevel = 2
+	t.World:Advance(0.15)
+
+	assert(#t.Snapshots == 1, `один снимок, а не {#t.Snapshots}`)
+	local entry = t.Snapshots[1]
+	assert(entry.Player == t.Player, "только владельцу")
+	assert(entry.Snapshot.Essence == 42)
+	assert(entry.Snapshot.RawFragments == 0)
+	local count = 0
+	for id in t.Upgrades do
+		count += 1
+		assert(entry.Snapshot.Levels[id] ~= nil, `уровень {id}`)
+	end
+	assert(count == 4 and entry.Snapshot.Levels.CollectionRadius == 2)
+	assert(entry.Snapshot.PurchaseAck == nil)
+
+	t.World:Advance(2)
+	assert(#t.Snapshots == 1, "без изменений повторно не шлётся")
+end)
+
+test("Снимок: изменение одного Essence — не чаще SnapshotInterval", function()
+	local t = setup()
+	local config = t.World:LoadModule("src/shared/Config/FactoryConfig")
+	t.World:Advance(0.15)
+	local before = #t.Snapshots
+
+	local duration = 2
+	for _ = 1, duration / 0.1 do
+		t.Data.Currency.Essence += 1 -- меняется на каждом тике
+		t.World:Advance(0.1)
+	end
+	local sent = #t.Snapshots - before
+	local maxAllowed = math.floor(duration / config.SnapshotInterval) + 1
+	assert(sent >= 2 and sent <= maxAllowed, `отправлено {sent}, ожидалось 2..{maxAllowed}`)
+	assert(t.Snapshots[#t.Snapshots].Snapshot.Essence >= t.Data.Currency.Essence - 5, "последний снимок свежий")
+end)
+
+test("Снимок: изменение RawFragments (сбор) шлётся с тем же троттлингом", function()
+	local t = setup()
+	local config = t.World:LoadModule("src/shared/Config/FactoryConfig")
+	t.World:Advance(0.15)
+	local before = #t.Snapshots
+
+	t.Data.Factory.RawFragments = 1 -- как после RequestCollect
+	t.World:Advance(0.1)
+	assert(#t.Snapshots == before, "в окне троттлинга не шлётся")
+
+	t.World:Advance(config.SnapshotInterval)
+	assert(#t.Snapshots == before + 1, "после окна — отправлен")
+	assert(t.Snapshots[#t.Snapshots].Snapshot.RawFragments == 1)
+end)
+
+test("Снимок: смена уровня уходит на ближайшем тике, без троттлинга", function()
+	local t = setup()
+	t.World:Advance(0.15)
+	t.Data.Currency.Essence += 1
+	t.World:Advance(0.1) -- в окне троттлинга: Essence не шлётся
+	local before = #t.Snapshots
+
+	t.Data.Factory.StorageCapacityLevel = 1 -- например, изменение из другой системы
+	t.World:Advance(0.1)
+	assert(#t.Snapshots == before + 1)
+	assert(t.Snapshots[#t.Snapshots].Snapshot.Levels.StorageCapacity == 1)
+end)
+
+test("Снимок: ответ на успешную покупку — сразу, с PurchaseAck и новым уровнем", function()
+	local t = setup()
+	t.Data.Currency.Essence = 1000
+	t.World:Advance(0.15)
+	local before = #t.Snapshots
+
+	t.Purchase("ConveyorSpeed", 1)
+	assert(#t.Snapshots == before + 1, "ответ синхронно, без ожидания тика")
+	local snap = t.Snapshots[#t.Snapshots].Snapshot
+	assert(snap.PurchaseAck == "ConveyorSpeed")
+	assert(snap.Levels.ConveyorSpeed == 1)
+	assert(snap.Essence == 1000 - t.Upgrades.ConveyorSpeed.Levels[1].Price)
+
+	t.World:Advance(0.15)
+	assert(#t.Snapshots == before + 1, "тик не дублирует уже отправленное")
+end)
+
+test("Снимок: отказ в покупке тоже подтверждается снимком (кнопка разблокируется)", function()
+	local t = setup()
+	t.Data.Currency.Essence = 1
+	t.Purchase("StorageCapacity", 1)
+
+	local snap = t.Snapshots[#t.Snapshots].Snapshot
+	assert(snap.PurchaseAck == "StorageCapacity" and snap.Levels.StorageCapacity == 0 and snap.Essence == 1)
+end)
+
+test("Снимок: PurchaseAck не эхоит произвольную строку клиента", function()
+	local t = setup()
+	t.Purchase("NoSuchUpgrade", 1)
+	t.Purchase(string.rep("x", 1000), 1)
+	for _, entry in t.Snapshots do
+		assert(entry.Snapshot.PurchaseAck == nil)
+	end
+end)
+
+test("Снимок: запросы, отброшенные rate limit'ом, без ответа", function()
+	local t = setup()
+	local config = t.World:LoadModule("src/shared/Config/FactoryConfig")
+	for _ = 1, config.MaxRequestsPerWindow + 10 do
+		t.Purchase("ConveyorSpeed", 1)
+	end
+	assert(#t.Snapshots == config.MaxRequestsPerWindow, `ответов {#t.Snapshots}`)
+end)
+
+test("Снимок: каждый игрок получает только свой", function()
+	local t = setup()
+	local other, otherData = t.AddPlayer(7)
+	otherData.Currency.Essence = 777
+	t.Data.Currency.Essence = 1
+	t.World:Advance(0.15)
+
+	assert(#t.Snapshots == 2)
+	for _, entry in t.Snapshots do
+		local expected = if entry.Player == other then 777 else 1
+		assert(entry.Snapshot.Essence == expected, "снимок не перепутан между игроками")
+	end
 end)
 
 return tests

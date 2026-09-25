@@ -54,4 +54,17 @@ export type PlayerProfile = {
 	},
 }
 
+-- Снимок экономики, который сервер шлёт владельцу через Remotes.EconomySnapshot (HUD, раздел 5.8).
+-- Только данные самого игрока. Цены и значения эффектов клиент берёт из UpgradeConfig/UpgradeEffects.
+export type EconomySnapshot = {
+	Essence: number,
+	-- Буфер сырых фрагментов (Factory.RawFragments). Ёмкость клиент считает сам из
+	-- Levels.StorageCapacity через UpgradeEffects.
+	RawFragments: number,
+	-- Текущий уровень по id апгрейда (ключи UpgradeConfig).
+	Levels: { [string]: number },
+	-- Id апгрейда, если снимок — ответ сервера на PurchaseUpgrade (успешный или отклонённый).
+	PurchaseAck: string?,
+}
+
 return {}

@@ -14,6 +14,9 @@ export type FactoryDefinition = {
 	MaxRequestsPerWindow: number,
 	-- Сколько отклонённых PurchaseUpgrade в окне считается подозрительной активностью (пишется в лог).
 	SuspiciousRejectThreshold: number,
+	-- Как часто, не чаще, отправлять клиенту снимок при изменении только Essence/RawFragments, секунд.
+	-- Смена уровней и ответ на покупку уходят сразу, без троттлинга.
+	SnapshotInterval: number,
 }
 
 local FactoryConfig: FactoryDefinition = {
@@ -23,6 +26,7 @@ local FactoryConfig: FactoryDefinition = {
 	RequestWindow = 1,
 	MaxRequestsPerWindow = 5,
 	SuspiciousRejectThreshold = 15,
+	SnapshotInterval = 0.5,
 }
 
 return FactoryConfig

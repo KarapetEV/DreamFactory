@@ -47,6 +47,8 @@ export type RemoteRegistry = {
 	RequestCollect: RemoteEvent,
 	-- FactorySystem (раздел 5.2)
 	PurchaseUpgrade: RemoteEvent,
+	-- Сервер → клиент: снимок экономики игрока (Types.EconomySnapshot), шлёт FactorySystem.
+	EconomySnapshot: RemoteEvent,
 	-- PetSystem (раздел 5.3)
 	HatchCocoon: RemoteEvent,
 	EquipPet: RemoteEvent,
@@ -62,6 +64,7 @@ export type RemoteRegistry = {
 local Remotes: RemoteRegistry = {
 	RequestCollect = getRemoteEvent(folder, "RequestCollect"),
 	PurchaseUpgrade = getRemoteEvent(folder, "PurchaseUpgrade"),
+	EconomySnapshot = getRemoteEvent(folder, "EconomySnapshot"),
 	HatchCocoon = getRemoteEvent(folder, "HatchCocoon"),
 	EquipPet = getRemoteEvent(folder, "EquipPet"),
 	UnequipPet = getRemoteEvent(folder, "UnequipPet"),

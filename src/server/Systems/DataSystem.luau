@@ -160,21 +160,50 @@ end
 	Приводит сохранённые данные к текущей схеме (мутирует на месте). Чистая функция
 	без обращений к Instance — пригодна для юнит-тестов.
 
-	Возвращает nil + причину, если данные трогать нельзя:
-	- SchemaVersion новее текущей: запись сделана более новой версией сервера
-	  (например, во время поэтапного деплоя). Старый код не знает новых полей и мог бы
-	  их испортить — такой профиль не загружаем. Проверка идёт ДО любой мутации.
+	Версия схемы: Meta = nil или Meta.SchemaVersion = nil — легаси-запись до введения
+	версионирования, версия 0 (отработает вся цепочка миграций + reconcile()).
+
+	Возвращает nil + причину + вид ошибки, если данные трогать нельзя. Все проверки идут
+	ДО любой мутации data — релиз профиля запишет его обратно как есть:
+	- "corrupt": профиль повреждён — data не таблица; Meta есть, но не таблица;
+	  SchemaVersion задан, но не целое неотрицательное конечное число (код всегда писал
+	  число, поэтому строки, включая "2", — тоже порча). Молча считать такую запись
+	  версией 0 нельзя: миграции прогнались бы по ней заново;
+	- "newer-schema": SchemaVersion новее текущей — запись сделана более новой версией
+	  сервера (например, во время поэтапного деплоя). Старый код не знает новых полей
+	  и мог бы их испортить — такой профиль не загружаем.
 ]]
-function DataSystem.MigrateProfileData(data: any): (PlayerProfile?, string?)
+export type MigrationError = "corrupt" | "newer-schema"
+
+function DataSystem.MigrateProfileData(data: any): (PlayerProfile?, string?, MigrationError?)
 	if type(data) ~= "table" then
-		return nil, "данные профиля не являются таблицей"
+		return nil, "данные профиля не являются таблицей", "corrupt"
 	end
 
 	local meta = data.Meta
-	local version = if type(meta) == "table" then tonumber(meta.SchemaVersion) or 0 else 0
+	local version = 0
+	if meta ~= nil then
+		if type(meta) ~= "table" then
+			return nil, `Meta не является таблицей ({typeof(meta)})`, "corrupt"
+		end
+		local rawVersion = meta.SchemaVersion
+		if rawVersion ~= nil then
+			-- rawVersion ~= rawVersion — NaN; math.huge — бесконечности.
+			if
+				type(rawVersion) ~= "number"
+				or rawVersion ~= rawVersion
+				or math.abs(rawVersion) == math.huge
+				or rawVersion % 1 ~= 0
+				or rawVersion < 0
+			then
+				return nil, `некорректный SchemaVersion: {tostring(rawVersion)} ({typeof(rawVersion)})`, "corrupt"
+			end
+			version = rawVersion
+		end
+	end
 
 	if version > CURRENT_SCHEMA_VERSION then
-		return nil, `SchemaVersion {version} новее поддерживаемой {CURRENT_SCHEMA_VERSION}`
+		return nil, `SchemaVersion {version} новее поддерживаемой {CURRENT_SCHEMA_VERSION}`, "newer-schema"
 	end
 
 	for fromVersion = version, CURRENT_SCHEMA_VERSION - 1 do
@@ -227,12 +256,16 @@ local function onPlayerAdded(player: Player)
 		return
 	end
 
-	local data, reason = DataSystem.MigrateProfileData(profile.Data)
+	local data, reason, errorKind = DataSystem.MigrateProfileData(profile.Data)
 	if data == nil then
-		warn(`[DataSystem] Профиль {player.UserId} не загружен: {reason}`)
+		warn(`[DataSystem] Профиль {player.Name} ({player.UserId}) не загружен ({errorKind}): {reason}`)
 		-- Данные не менялись (проверка до мутаций) — релиз запишет их как есть и снимет лок.
 		ProfileStoreService.ReleaseProfile(player)
-		player:Kick("Сервер обновляется. Перезайдите, чтобы попасть на актуальную версию.")
+		if errorKind == "newer-schema" then
+			player:Kick("Сервер обновляется. Перезайдите, чтобы попасть на актуальную версию.")
+		else
+			player:Kick("Не удалось прочитать сохранение. Мы уже разбираемся — попробуйте зайти позже.")
+		end
 		return
 	end
 

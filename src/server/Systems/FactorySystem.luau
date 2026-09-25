@@ -42,6 +42,7 @@ type PlayerState = {
 	Rejects: number,
 	RejectWindowStart: number,
 	CorruptionReported: boolean, -- предупреждение о битом профиле уже записано
+	TickErrorReported: boolean, -- предупреждение об ошибке тика конвейера уже записано
 }
 
 local REJECT_LOG_WINDOW = 60
@@ -85,6 +86,7 @@ local function getPlayerState(player: Player): PlayerState
 			Rejects = 0,
 			RejectWindowStart = 0,
 			CorruptionReported = false,
+			TickErrorReported = false,
 		}
 		playerStates[player] = state
 	end
@@ -265,12 +267,24 @@ local function runConveyor(player: Player, data: PlayerProfile, now: number)
 	FactorySystem.OnEssenceProduced:Fire(player, amount)
 end
 
+-- Каждый игрок — под своим pcall: ошибка на битом профиле (например, Rebirth или Factory
+-- не таблица — reconcile() неверные типы не чинит) не должна останавливать конвейер остальным.
+-- Предупреждение — один раз на игрока за сессию, чтобы не спамить лог на каждом тике.
 local function conveyorTick()
 	local now = os.clock()
 	for _, player in Players:GetPlayers() do
-		local data = DataSystem.GetData(player)
-		if data then
-			runConveyor(player, data, now)
+		local ok, err = pcall(function()
+			local data = DataSystem.GetData(player)
+			if data then
+				runConveyor(player, data, now)
+			end
+		end)
+		if not ok then
+			local state = getPlayerState(player)
+			if not state.TickErrorReported then
+				state.TickErrorReported = true
+				warn(`[FactorySystem] Ошибка конвейера у {player.Name} ({player.UserId}): {err}`)
+			end
 		end
 	end
 end
@@ -285,7 +299,12 @@ function FactorySystem.Init()
 	task.spawn(function()
 		while true do
 			task.wait(FactoryConfig.TickInterval)
-			conveyorTick()
+			-- Страховка: поток конвейера не должен умереть ни при каких ошибках
+			-- (например, если бросит Players:GetPlayers). Ошибки игроков ловятся внутри.
+			local ok, err = pcall(conveyorTick)
+			if not ok then
+				warn(`[FactorySystem] Ошибка тика конвейера: {err}`)
+			end
 		end
 	end)
 end

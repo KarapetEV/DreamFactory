@@ -266,4 +266,124 @@ test("Миграция: данные более новой схемы не тр�
 	assert(newer.Factory == nil and newer.Meta.SchemaVersion == snapshot.Meta.SchemaVersion, "данные не мутированы")
 end)
 
+-- Глубокое сравнение; NaN считается равным NaN (иначе запись с SchemaVersion = 0/0 не сравнить).
+local function deepEqual(a: any, b: any): boolean
+	if type(a) ~= "table" or type(b) ~= "table" then
+		return a == b or (a ~= a and b ~= b)
+	end
+	for k, v in a do
+		if not deepEqual(v, b[k]) then
+			return false
+		end
+	end
+	for k in b do
+		if a[k] == nil then
+			return false
+		end
+	end
+	return true
+end
+
+test("S4-2: повреждённые Meta/SchemaVersion отклоняются как corrupt без мутаций", function()
+	local world = Harness.NewWorld()
+	local _, dataSystem = world:NewServer()
+
+	local cases: { { Name: string, Meta: any } } = {
+		{ Name = "SchemaVersion = \"abc\"", Meta = { SchemaVersion = "abc" } },
+		{ Name = "SchemaVersion = \"2\"", Meta = { SchemaVersion = "2" } },
+		{ Name = "SchemaVersion = 1.5", Meta = { SchemaVersion = 1.5 } },
+		{ Name = "SchemaVersion = -1", Meta = { SchemaVersion = -1 } },
+		{ Name = "SchemaVersion = NaN", Meta = { SchemaVersion = 0 / 0 } },
+		{ Name = "SchemaVersion = inf", Meta = { SchemaVersion = math.huge } },
+		{ Name = "SchemaVersion = -inf", Meta = { SchemaVersion = -math.huge } },
+		{ Name = "SchemaVersion = true", Meta = { SchemaVersion = true } },
+		{ Name = "Meta = 5", Meta = 5 },
+		{ Name = "Meta = \"x\"", Meta = "x" },
+	}
+	for _, case in cases do
+		local data = { Meta = case.Meta, Currency = { Essence = 10 }, Factory = { StorageCapacity = 100 } }
+		local snapshot = Harness.DeepCopy(data)
+		local migrated, reason, kind = dataSystem.MigrateProfileData(data)
+
+		assert(migrated == nil and type(reason) == "string", `{case.Name}: загрузка отклонена с причиной`)
+		assert(kind == "corrupt", `{case.Name}: вид ошибки corrupt, а не {kind}`)
+		assert(deepEqual(data, snapshot), `{case.Name}: данные не мутированы`)
+	end
+end)
+
+test("S4-2: слишком новая схема отклоняется как newer-schema", function()
+	local world = Harness.NewWorld()
+	local _, dataSystem = world:NewServer()
+
+	local data = { Meta = { SchemaVersion = dataSystem.CURRENT_SCHEMA_VERSION + 1 } }
+	local snapshot = Harness.DeepCopy(data)
+	local migrated, reason, kind = dataSystem.MigrateProfileData(data)
+	assert(migrated == nil and type(reason) == "string" and kind == "newer-schema")
+	assert(deepEqual(data, snapshot), "данные не мутированы")
+end)
+
+test("S4-2: Meta = nil и SchemaVersion = nil по-прежнему мигрируют с версии 0", function()
+	local world = Harness.NewWorld()
+	local _, dataSystem = world:NewServer()
+
+	for _, data in { { Currency = { Essence = 7 } }, { Meta = { FirstJoinAt = 1 }, Currency = { Essence = 7 } } } do
+		local migrated, reason, kind = dataSystem.MigrateProfileData(data)
+		assert(migrated, `миграция прошла: {reason}`)
+		assert(reason == nil and kind == nil)
+		assert(migrated.Currency.Essence == 7, "валюта сохранена")
+		assert(migrated.Factory.StorageCapacityLevel == 0, "дозаполнено reconcile()")
+		assert(migrated.Meta.SchemaVersion == dataSystem.CURRENT_SCHEMA_VERSION)
+	end
+end)
+
+-- DataSystem.Init с отдельным ProfileStoreService («процесс сервера» без NewServer) и игрок
+-- с методом Kick. Профиль в хранилище подкладывается заранее.
+local function joinWithRecord(storedData: any): (any, any, { string })
+	local world = Harness.NewWorld()
+	world.Records[KEY] = {
+		Data = storedData,
+		Meta = { ActiveSession = nil, LastUpdate = 0, SessionLoadCount = 0 },
+	}
+	local kicks = {}
+	local player = world:NewPlayer() :: any
+	function player:Kick(message: string)
+		table.insert(kicks, message)
+		self.Parent = nil
+	end
+	world.Players = { player }
+
+	local dataSystem = world:LoadModule("src/server/Systems/DataSystem")
+	world:Spawn(function()
+		dataSystem.Init() -- подхватывает уже вошедших игроков (world.Players)
+	end)
+	world:Advance(60)
+	return world, dataSystem, kicks
+end
+
+test("S4-2: onPlayerAdded при повреждённом профиле кикает игрока и снимает лок", function()
+	for _, stored in { { Meta = { SchemaVersion = 1.5 }, Currency = { Essence = 3 } }, { Meta = 5, Currency = { Essence = 3 } } } do
+		local snapshot = Harness.DeepCopy(stored)
+		local world, dataSystem, kicks = joinWithRecord(stored)
+
+		assert(#kicks == 1 and string.find(kicks[1], "Не удалось прочитать сохранение", 1, true), "кик с текстом о порче")
+		assert(lockOf(world) == nil, "лок снят")
+		assert(deepEqual(world.Records[KEY].Data, snapshot), "данные записаны как есть")
+		assert(dataSystem.GetData(world.Players[1]) == nil, "профиль не выдан системам")
+	end
+end)
+
+test("S4-2: onPlayerAdded при слишком новой схеме кикает с прежним текстом", function()
+	local world, _, kicks = joinWithRecord({ Meta = { SchemaVersion = 9999 } })
+	assert(#kicks == 1 and string.find(kicks[1], "Сервер обновляется", 1, true), "кик про обновление сервера")
+	assert(lockOf(world) == nil, "лок снят")
+end)
+
+test("S4-2: onPlayerAdded с нормальным профилем не кикает", function()
+	local world, dataSystem, kicks = joinWithRecord({ Meta = { SchemaVersion = 2 }, Currency = { Essence = 3 } })
+	assert(#kicks == 0, "без кика")
+	local data = dataSystem.GetData(world.Players[1])
+	assert(data and data.Currency.Essence == 3, "профиль выдан")
+	assert(lockOf(world) ~= nil, "лок держится")
+end)
+
 return tests

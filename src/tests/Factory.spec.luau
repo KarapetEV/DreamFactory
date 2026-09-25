@@ -61,6 +61,15 @@ local function setup()
 		Purchase = function(...)
 			handler(player, ...)
 		end,
+		-- Ещё один игрок конвейера со своим (дефолтным) профилем. first = true — поставить
+		-- его в начало Players:GetPlayers(), чтобы он обрабатывался раньше основного.
+		AddPlayer = function(userId: number, first: boolean?)
+			local other = world:NewPlayer(userId)
+			local otherData = dataSystem.BuildDefaultProfile()
+			profiles[other] = otherData
+			table.insert(world.Players, if first then 1 else #world.Players + 1, other)
+			return other, otherData
+		end,
 	}
 end
 
@@ -254,6 +263,45 @@ test("Нечисловой выход конвейера не пишется в 
 		assert(#t.Produced == 0, "событие не отправлено")
 		assert(#t.World.Warnings == 1, "одно предупреждение, без спама на каждом тике")
 	end
+end)
+
+test("S4-1: ошибка на битом профиле одного игрока не останавливает конвейер остальным", function()
+	local t = setup()
+	local delay = t.Upgrades.ConveyorSpeed.BaseValue
+	t.Data.Factory.RawFragments = 5
+
+	-- Битые игроки стоят в списке раньше нормального: без pcall тик падал бы до него.
+	local broken, brokenData = t.AddPlayer(1001, true)
+	brokenData.Factory.RawFragments = 5
+	brokenData.Rebirth = 5 :: any -- индексирование числа бросает ошибку в runConveyor
+	local brokenCurrency, brokenCurrencyData = t.AddPlayer(1002, true)
+	brokenCurrencyData.Factory.RawFragments = 5
+	brokenCurrencyData.Currency = "x" :: any
+
+	t.World:Advance(delay * 4 + 0.15)
+
+	assert(t.Data.Currency.Essence > 0, "у нормального игрока Essence растёт")
+	assert(t.Data.Factory.RawFragments < 5, "нормальный игрок тратит фрагменты")
+	local normalEvents = 0
+	for _, event in t.Produced do
+		assert(event.Player ~= broken and event.Player ~= brokenCurrency, "битым игрокам событие не отправлено")
+		if event.Player == t.Player then
+			normalEvents += 1
+		end
+	end
+	assert(normalEvents >= 3, `OnEssenceProduced нормальному игроку: {normalEvents}`)
+
+	for _, userId in { 1001, 1002 } do
+		local count = 0
+		for _, message in t.World.Warnings do
+			if string.find(message, `({userId})`, 1, true) then
+				count += 1
+			end
+		end
+		assert(count == 1, `предупреждение про {userId} ровно одно, а не {count}`)
+	end
+	assert(#t.World.Warnings == 2, `других предупреждений нет: {#t.World.Warnings}`)
+	assert(brokenData.Factory.RawFragments == 5, "битому игроку ничего не списано")
 end)
 
 ------------------------------------------------------------------------------------------

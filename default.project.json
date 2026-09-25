@@ -5,9 +5,6 @@
     "ServerScriptService": {
       "server": {
         "$path": "src/server"
-      },
-      "tests": {
-        "$path": "src/tests"
       }
     },
     "StarterPlayer": {

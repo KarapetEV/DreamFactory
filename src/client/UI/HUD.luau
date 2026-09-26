@@ -218,8 +218,10 @@ local function build(): ScreenGui
 
 	local panel = Instance.new("Frame")
 	panel.Size = UDim2.fromOffset(460, 8 + #TRACK_ORDER * 48)
-	panel.AnchorPoint = Vector2.new(1, 0)
-	panel.Position = UDim2.new(1, -12, 0, 12)
+	-- Правый нижний угол: верхний правый занят CoreGui (список игроков), который перехватывает
+	-- клики и растёт с числом игроков на сервере; нижний угол CoreGui не использует.
+	panel.AnchorPoint = Vector2.new(1, 1)
+	panel.Position = UDim2.new(1, -12, 1, -12)
 	panel.BackgroundColor3 = Color3.fromRGB(30, 25, 50)
 	panel.BackgroundTransparency = 0.25
 	panel.Parent = gui

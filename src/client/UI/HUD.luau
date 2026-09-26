@@ -11,6 +11,9 @@
 	- Кнопка блокируется до ответа сервера (снимок с PurchaseAck = id) или до таймаута —
 	  это только против визуального рассинхрона. Неактивность на MaxLevel и при нехватке
 	  Essence — тоже только UX: сервер перепроверяет всё сам.
+	- Для других экранов (ShopUI) HUD отдаёт последний снимок (GetSnapshot/SnapshotChanged) и
+	  место под кнопку меню (AddMenuButton): экран не подписывается на ремоут сам — события,
+	  пришедшие до подписки, доставляются только первому подписчику, а он — HUD.
 ]]
 
 local Players = game:GetService("Players")
@@ -18,6 +21,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Types = require(ReplicatedStorage.shared.Types)
 local Remotes = require(ReplicatedStorage.shared.Remotes)
+local Signal = require(ReplicatedStorage.shared.Signal)
 local UpgradeConfig = require(ReplicatedStorage.shared.Config.UpgradeConfig)
 local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
 
@@ -61,7 +65,12 @@ type Row = {
 
 local HUD = {}
 
+-- (snapshot: EconomySnapshot) — после каждого валидного снимка сервера.
+HUD.SnapshotChanged = Signal.new()
+
 local snapshot: EconomySnapshot? = nil
+local menuFrame: Frame
+local menuButtonCount = 0
 local essenceLabel: TextLabel
 local fragmentsLabel: TextLabel
 local rows: { [string]: Row } = {}
@@ -194,6 +203,7 @@ local function onSnapshot(value: unknown)
 	end
 	local newSnapshot = value :: EconomySnapshot
 	snapshot = newSnapshot
+	HUD.SnapshotChanged:Fire(newSnapshot)
 
 	local ack = newSnapshot.PurchaseAck
 	if ack and rows[ack] then
@@ -215,6 +225,16 @@ local function build(): ScreenGui
 	essenceFrame.Parent = gui
 	essenceLabel = makeLabel(essenceFrame, "", UDim2.new(1, -16, 0, 36), UDim2.fromOffset(8, 4))
 	fragmentsLabel = makeLabel(essenceFrame, "", UDim2.new(1, -16, 0, 32), UDim2.fromOffset(8, 44))
+
+	-- Кнопки меню (магазин и т.п.) — столбиком у левого края по центру, добавляются через
+	-- AddMenuButton. Не под счётчиком Essence: левый верхний угол занят окном чата CoreGui,
+	-- которое перехватывает клики (как список игроков справа сверху).
+	menuFrame = Instance.new("Frame")
+	menuFrame.Size = UDim2.fromOffset(160, 44)
+	menuFrame.AnchorPoint = Vector2.new(0, 0.5)
+	menuFrame.Position = UDim2.new(0, 12, 0.5, 0)
+	menuFrame.BackgroundTransparency = 1
+	menuFrame.Parent = gui
 
 	local panel = Instance.new("Frame")
 	panel.Size = UDim2.fromOffset(460, 8 + #TRACK_ORDER * 48)
@@ -246,6 +266,29 @@ local function build(): ScreenGui
 	end
 
 	return gui
+end
+
+-- Последний валидный снимок сервера или nil, пока он не пришёл.
+function HUD.GetSnapshot(): EconomySnapshot?
+	return snapshot
+end
+
+-- Добавляет кнопку в меню HUD (вызывать после Init). onClick — только открытие/закрытие
+-- интерфейса, игровых действий по клику нет.
+function HUD.AddMenuButton(text: string, onClick: () -> ()): TextButton
+	assert(menuFrame, "HUD.AddMenuButton вызван до HUD.Init")
+	local button = Instance.new("TextButton")
+	button.Size = UDim2.fromOffset(160, 36)
+	button.Position = UDim2.fromOffset(0, menuButtonCount * 44)
+	button.BackgroundColor3 = Color3.fromRGB(60, 50, 110)
+	button.TextColor3 = Color3.new(1, 1, 1)
+	button.TextScaled = true
+	button.Text = text
+	button.Parent = menuFrame
+	menuButtonCount += 1
+	menuFrame.Size = UDim2.fromOffset(160, menuButtonCount * 44)
+	button.Activated:Connect(onClick)
+	return button
 end
 
 function HUD.Init()

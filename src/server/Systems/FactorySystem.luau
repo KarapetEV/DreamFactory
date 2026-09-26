@@ -23,8 +23,8 @@
 	  ёмкость/скорость/радиус вычисляются из него на каждое обращение (UpgradeEffects).
 
 	Снимок для HUD (Remotes.EconomySnapshot, раздел 5.8):
-	- владельцу уходит только его Essence, RawFragments, уровни апгрейдов и прогресс rebirth
-	  (Count, ClarityMultiplier, CurrentBiome) — ничего о других игроках;
+	- владельцу уходит только его Essence, RawFragments, уровни апгрейдов, прогресс rebirth
+	  (Count, ClarityMultiplier, CurrentBiome) и владение геймпассами — ничего о других игроках;
 	- на тике сравнивается с последним отправленным: первый снимок после загрузки профиля
 	  и смена уровней/прогресса rebirth — сразу, изменение только Essence/RawFragments — не
 	  чаще SnapshotInterval.
@@ -245,6 +245,16 @@ local function buildSnapshot(data: PlayerProfile, purchaseAck: string?, rebirthA
 	-- Rebirth читаем защищённо: битый раздел не должен блокировать ответ на покупку
 	-- (сам конвейер на таком профиле сообщит о порче в лог).
 	local rebirth: any = if type(data.Rebirth) == "table" then data.Rebirth else {}
+	-- То же для Monetization: битый раздел даёт пустой список, а не падение.
+	local gamePassesOwned: { string } = {}
+	local monetization: any = data.Monetization
+	if type(monetization) == "table" and type(monetization.GamePassesOwned) == "table" then
+		for _, id in monetization.GamePassesOwned do
+			if type(id) == "string" then
+				table.insert(gamePassesOwned, id)
+			end
+		end
+	end
 	return {
 		Essence = data.Currency.Essence,
 		RawFragments = data.Factory.RawFragments,
@@ -254,6 +264,7 @@ local function buildSnapshot(data: PlayerProfile, purchaseAck: string?, rebirthA
 		ClarityMultiplier = if type(rebirth.ClarityMultiplier) == "number" then rebirth.ClarityMultiplier else 1,
 		CurrentBiome = if type(rebirth.CurrentBiome) == "string" then rebirth.CurrentBiome else "",
 		RebirthAck = rebirthAck,
+		GamePassesOwned = gamePassesOwned,
 	}
 end
 

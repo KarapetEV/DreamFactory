@@ -73,6 +73,8 @@ export type EconomySnapshot = {
 	CurrentBiome: string,
 	-- Ответ на PerformRebirth: true — rebirth выполнен, false — отклонён; nil — не ответ на rebirth.
 	RebirthAck: boolean?,
+	-- Id геймпассов из MonetizationConfig, которыми владеет игрок (кэш серверной проверки Roblox).
+	GamePassesOwned: { string },
 }
 
 -- Снимок петов, который сервер шлёт владельцу через Remotes.PetSnapshot (раздел 5.3).

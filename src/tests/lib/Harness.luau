@@ -107,6 +107,11 @@ function Harness.NewWorld()
 	-- (nil — не бросает): воспроизводят Studio с неопубликованным плейсом.
 	self.IsStudio = false
 	self.GetDataStoreError = nil :: string?
+	-- Ответ MarketplaceService:UserOwnsGamePassAsync(userId, gamePassId): функция теста
+	-- (может вернуть значение, бросить ошибку или yield'ить через world.Task.wait). nil — false.
+	self.GamePassOwnership = nil :: ((userId: number, gamePassId: number) -> any)?
+	-- Подписчики MarketplaceService.PromptGamePassPurchaseFinished: тест вызывает их сам.
+	self.PurchaseFinishedHandlers = {} :: { (...any) -> () }
 	-- Что возвращает Players:GetPlayers() внутри мира.
 	self.Players = {} :: { any }
 	-- Источник чисел в [0, 1) для застабленного Random (Random.new():NextNumber()).
@@ -234,6 +239,17 @@ function World:_makeEnv(moduleCache: { [string]: any }, scriptPath: string?): { 
 			end,
 		},
 		Workspace = { Name = "Workspace" },
+		MarketplaceService = {
+			UserOwnsGamePassAsync = function(_self: any, userId: number, gamePassId: number): any
+				local ownership = world.GamePassOwnership
+				return if ownership then ownership(userId, gamePassId) else false
+			end,
+			PromptGamePassPurchaseFinished = {
+				Connect = function(_self: any, fn: (...any) -> ())
+					table.insert(world.PurchaseFinishedHandlers, fn)
+				end,
+			},
+		},
 		Players = {
 			PlayerAdded = signal,
 			PlayerRemoving = signal,

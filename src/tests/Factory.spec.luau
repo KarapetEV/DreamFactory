@@ -23,6 +23,7 @@ local function setup()
 	local data = dataSystem.BuildDefaultProfile()
 	local profiles = { [player] = data }
 	local handler
+	local snapshotFireServer
 	local snapshots = {} -- { Player, Snapshot } в порядке FireClient
 
 	local factory = world:LoadModule("src/server/Systems/FactorySystem", {
@@ -41,6 +42,11 @@ local function setup()
 				},
 			},
 			EconomySnapshot = {
+				OnServerEvent = {
+					Connect = function(_self, fn)
+						snapshotFireServer = fn
+					end,
+				},
 				FireClient = function(_self, target, snapshot)
 					table.insert(snapshots, { Player = target, Snapshot = Harness.DeepCopy(snapshot) })
 				end,
@@ -62,6 +68,10 @@ local function setup()
 		Factory = factory,
 		Produced = produced,
 		Snapshots = snapshots,
+		-- Зарегистрированный обработчик EconomySnapshot.OnServerEvent (вызов клиентом односторонней ремоты).
+		SnapshotFireServer = function(p, ...)
+			snapshotFireServer(p, ...)
+		end,
 		Upgrades = world:LoadModule("src/shared/Config/UpgradeConfig"),
 		Effects = world:LoadModule("src/shared/UpgradeEffects"),
 		DataSystem = dataSystem,
@@ -503,6 +513,56 @@ test("Снимок: каждый игрок получает только сво
 		local expected = if entry.Player == other then 777 else 1
 		assert(entry.Snapshot.Essence == expected, "снимок не перепутан между игроками")
 	end
+end)
+
+test("S5-1: битый Collection — покупка проходит, ответ изолирован, предупреждение одно", function()
+	local t = setup()
+	t.Data.Currency.Essence = 1000
+	;(t.Data :: any).Collection = 5
+	local price = t.Upgrades.ConveyorSpeed.Levels[1].Price
+
+	local ok = pcall(t.Purchase, "ConveyorSpeed", 1)
+	assert(ok, "обработчик не должен бросать наружу")
+	assert(t.Data.Factory.ConveyorSpeedLevel == 1 and t.Data.Currency.Essence == 1000 - price)
+	assert(#t.Snapshots == 0, "снимок собрать нельзя")
+	assert(#t.World.Warnings == 1, `предупреждений {#t.World.Warnings}`)
+
+	assert(pcall(t.Purchase, "ConveyorSpeed", 2))
+	assert(pcall(t.Purchase, "ConveyorSpeed", 2))
+	t.World:Advance(0.5)
+	assert(#t.World.Warnings == 2, "плюс одно предупреждение тика конвейера, ответы на покупки не спамят")
+	local purchaseWarnings = 0
+	for _, text in t.World.Warnings do
+		if string.find(text, "ответа на покупку", 1, true) then
+			purchaseWarnings += 1
+		end
+	end
+	assert(purchaseWarnings == 1, `предупреждений об ответе {purchaseWarnings}`)
+end)
+
+test("S5-2: запрос от вышедшего игрока (Parent = nil) игнорируется полностью", function()
+	local t = setup()
+	t.Data.Currency.Essence = 1000
+	local other, otherData = t.AddPlayer(9)
+	otherData.Currency.Essence = 1000
+	t.Player.Parent = nil
+
+	t.Purchase("ConveyorSpeed", 1)
+	assert(#t.Snapshots == 0 and #t.World.Warnings == 0)
+	assert(t.Data.Currency.Essence == 1000 and t.Data.Factory.ConveyorSpeedLevel == 0)
+	assert(otherData.Factory.ConveyorSpeedLevel == 0 and other.Parent ~= nil)
+end)
+
+test("S5-3: FireServer на EconomySnapshot — один warn с UserId, без снимков и изменений", function()
+	local t = setup()
+	local before = Harness.DeepCopy(t.Data)
+	t.SnapshotFireServer(t.Player, "любой", { Essence = 1e9 })
+	t.SnapshotFireServer(t.Player, "ещё")
+	assert(#t.World.Warnings == 1, `предупреждений {#t.World.Warnings}`)
+	assert(string.find(t.World.Warnings[1], tostring(t.Player.UserId), 1, true))
+	assert(not string.find(t.World.Warnings[1], "1000000000", 1, true), "значения клиента не логируются")
+	assert(#t.Snapshots == 0)
+	assert(Harness.DeepCopy(t.Data).Currency.Essence == before.Currency.Essence)
 end)
 
 return tests

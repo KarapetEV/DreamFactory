@@ -153,7 +153,13 @@ local function onPurchaseClicked(row: Row)
 	end
 	local level = getConfirmedLevel(row.Id)
 	local track = UpgradeConfig[row.Id]
-	if level == nil or level >= track.MaxLevel or not snapshot or snapshot.Essence < track.Levels[level + 1].Price then
+	if
+		level == nil
+		or level >= track.MaxLevel
+		or not snapshot
+		or not UpgradeEffects.IsFinite(snapshot.Essence)
+		or snapshot.Essence < track.Levels[level + 1].Price
+	then
 		return
 	end
 

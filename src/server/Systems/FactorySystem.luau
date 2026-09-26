@@ -87,6 +87,9 @@ local FactorySystem = {}
 FactorySystem.OnEssenceProduced = Signal.new()
 
 local playerStates: { [Player]: PlayerState } = {}
+-- Игроки, чей вызов FireServer на односторонний EconomySnapshot уже записан в лог.
+-- Отдельно от playerStates: запись для такого игрока создавать нельзя. Ключи слабые.
+local reportedForeignFires: { [Player]: true } = setmetatable({}, { __mode = "k" }) :: any
 
 local function getPlayerState(player: Player): PlayerState
 	local state = playerStates[player]
@@ -280,6 +283,12 @@ local function syncSnapshot(player: Player, data: PlayerProfile, now: number)
 end
 
 local function onPurchaseUpgrade(player: Player, upgradeId: unknown, targetLevel: unknown)
+	-- Запрос в окне после PlayerRemoving: getPlayerState пересоздал бы запись, которую
+	-- уже никто не очистит (утечка). Вышедшему игроку отвечать нечем и незачем.
+	if player.Parent == nil then
+		return
+	end
+
 	local now = os.clock()
 	local state = getPlayerState(player)
 
@@ -297,10 +306,18 @@ local function onPurchaseUpgrade(player: Player, upgradeId: unknown, targetLevel
 
 	-- Ответ — и на успех, и на отказ: подтверждённое состояние, по которому клиент
 	-- разблокирует кнопку. PurchaseAck — только валидный id из конфига, не эхо строки клиента.
-	local data = DataSystem.GetData(player)
-	if data then
-		local ack = if type(upgradeId) == "string" and UpgradeEffects.GetTrack(upgradeId) then upgradeId else nil
-		sendSnapshot(player, state, buildSnapshot(data, ack), now)
+	-- Сборка снимка читает уровни всех треков: битый раздел профиля (например Collection не
+	-- таблица) бросает ошибку даже после успешной покупки другого трека. Транзакция уже
+	-- выполнена; ошибку ответа изолируем и пишем в лог один раз за сессию.
+	local ok, err = pcall(function()
+		local data = DataSystem.GetData(player)
+		if data then
+			local ack = if type(upgradeId) == "string" and UpgradeEffects.GetTrack(upgradeId) then upgradeId else nil
+			sendSnapshot(player, state, buildSnapshot(data, ack), now)
+		end
+	end)
+	if not ok then
+		reportCorruption(player, `ошибка сборки ответа на покупку: {err}`)
 	end
 end
 
@@ -371,8 +388,19 @@ end
 function FactorySystem.Init()
 	Remotes.PurchaseUpgrade.OnServerEvent:Connect(onPurchaseUpgrade)
 
+	-- EconomySnapshot — только сервер → клиент; вызов FireServer означает модифицированный
+	-- клиент. Пишем только Name/UserId (значения аргументов не логируем), один раз за сессию.
+	Remotes.EconomySnapshot.OnServerEvent:Connect(function(player: Player)
+		if reportedForeignFires[player] then
+			return
+		end
+		reportedForeignFires[player] = true
+		warn(`[FactorySystem] Клиент вызвал серверный вход EconomySnapshot: {player.Name} ({player.UserId})`)
+	end)
+
 	Players.PlayerRemoving:Connect(function(player)
 		playerStates[player] = nil
+		reportedForeignFires[player] = nil
 	end)
 
 	task.spawn(function()

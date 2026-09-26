@@ -332,9 +332,26 @@ function ProfileStoreService.Init(options: InitOptions)
 	createDefaultData = options.CreateDefaultData
 	onSessionLost = options.OnSessionLost
 
-	local realStore = DataStoreService:GetDataStore(options.StoreName) :: any
+	local isStudio = RunService:IsStudio()
 
-	if RunService:IsStudio() then
+	-- В Studio DataStore недоступен двумя способами, и оба ведут в один fallback:
+	-- GetDataStore бросает ошибку (плейс не опубликован: «You must publish this place to the web»)
+	-- либо пробная запись отклоняется (выключен доступ к API). Вне Studio ошибка не глотается:
+	-- молчаливое in-memory хранилище на живом сервере означало бы потерю прогресса.
+	local gotStore, realStore = pcall(function()
+		return DataStoreService:GetDataStore(options.StoreName) :: any
+	end)
+	if not gotStore then
+		if not isStudio then
+			error(realStore, 0)
+		end
+		warn(`[ProfileStoreService] DataStore недоступен в Studio ({realStore}) — используется in-memory хранилище, прогресс НЕ сохраняется`)
+		store = createMockStore()
+		isMockStore = true
+		return
+	end
+
+	if isStudio then
 		-- Пробный UpdateAsync с отменой записи: падает, если в Studio выключен доступ к API.
 		local ok = pcall(function()
 			realStore:UpdateAsync("__AccessCheck", function()

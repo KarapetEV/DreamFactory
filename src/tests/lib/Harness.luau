@@ -22,6 +22,9 @@ export type Runtime = {
 	ReadFile: (path: string) -> string,
 	-- Компилирует исходник в функцию с заданным окружением глобалов.
 	Load: (source: string, chunkName: string, env: { [string]: any }) -> () -> any,
+	-- JSON-сериализация для HttpService:JSONEncode/JSONDecode (in-memory хранилище ProfileStoreService).
+	JsonEncode: (value: any) -> string,
+	JsonDecode: (text: string) -> any,
 }
 
 -- Пути Rojo-дерева (default.project.json), нужные серверным модулям.
@@ -80,6 +83,10 @@ function Harness.NewWorld()
 	-- Задержки (виртуальные секунды) для следующих вызовов UpdateAsync, по одной на вызов.
 	self.StoreDelays = {} :: { number }
 	self.Warnings = {} :: { string }
+	-- Режим Studio (RunService:IsStudio) и ошибка, которую бросает DataStoreService:GetDataStore
+	-- (nil — не бросает): воспроизводят Studio с неопубликованным плейсом.
+	self.IsStudio = false
+	self.GetDataStoreError = nil :: string?
 	-- Что возвращает Players:GetPlayers() внутри мира.
 	self.Players = {} :: { any }
 	self._sleeping = {} :: { { at: number, seq: number, co: thread } }
@@ -173,9 +180,18 @@ function World:_makeEnv(moduleCache: { [string]: any }, scriptPath: string?): { 
 				world._guid += 1
 				return `guid-{world._guid}`
 			end,
+			JSONEncode = function(_self: any, value: any): string
+				return getRuntime().JsonEncode(value)
+			end,
+			JSONDecode = function(_self: any, text: string): any
+				return getRuntime().JsonDecode(text)
+			end,
 		},
 		DataStoreService = {
 			GetDataStore = function(_self: any, _name: string)
+				if world.GetDataStoreError then
+					error(world.GetDataStoreError, 0)
+				end
 				return world.Store
 			end,
 			GetRequestBudgetForRequestType = function()
@@ -184,7 +200,7 @@ function World:_makeEnv(moduleCache: { [string]: any }, scriptPath: string?): { 
 		},
 		RunService = {
 			IsStudio = function()
-				return false
+				return world.IsStudio
 			end,
 			IsServer = function()
 				return true

@@ -386,4 +386,75 @@ test("S4-2: onPlayerAdded с нормальным профилем не кика
 	assert(lockOf(world) ~= nil, "лок держится")
 end)
 
+------------------------------------------------------------------------------------------
+-- Fallback на in-memory хранилище в Studio (S2-fix)
+------------------------------------------------------------------------------------------
+
+-- Профиль загружается, правится и сохраняется, а настоящий DataStore не трогается.
+local function assertWorksInMemory(world: any, server: any)
+	local player = world:NewPlayer()
+	local profile = runIn(world, function()
+		return server.LoadProfile(player)
+	end)
+	assert(type(profile) == "table" and profile.Active, "профиль загружен через in-memory хранилище")
+
+	profile.Data.Currency.Essence = 7
+	assert(runIn(world, function()
+		return server.SaveProfile(player)
+	end) == true, "сохранение работает")
+	assert(world.Records[KEY] == nil, "настоящий DataStore не использовался")
+
+	local hasWarning = false
+	for _, message in world.Warnings do
+		if string.find(message, "in-memory", 1, true) then
+			hasWarning = true
+		end
+	end
+	assert(hasWarning, "предупреждение о том, что прогресс не сохраняется")
+end
+
+test("Studio: GetDataStore бросает ошибку (плейс не опубликован) — работаем через in-memory", function()
+	local world = Harness.NewWorld()
+	world.IsStudio = true
+	world.GetDataStoreError = "You must publish this place to the web to access DataStore."
+
+	local server = world:NewServer() -- не должно бросать
+	assertWorksInMemory(world, server)
+end)
+
+test("Studio: пробная запись отклонена (нет доступа к API) — тот же fallback", function()
+	local world = Harness.NewWorld()
+	world.IsStudio = true
+	world.Store.UpdateAsync = function()
+		error("Studio access to APIs is not allowed", 0)
+	end
+
+	local server = world:NewServer()
+	assertWorksInMemory(world, server)
+end)
+
+test("Studio: доступный DataStore используется как обычно", function()
+	local world = Harness.NewWorld()
+	world.IsStudio = true
+
+	local server = world:NewServer()
+	local player = world:NewPlayer()
+	assert(runIn(world, function()
+		return server.LoadProfile(player)
+	end), "профиль загружен")
+	assert(world.Records[KEY] ~= nil, "запись ушла в настоящий DataStore")
+end)
+
+test("Вне Studio: ошибка GetDataStore не глотается (без молчаливой потери прогресса)", function()
+	local world = Harness.NewWorld()
+	world.IsStudio = false
+	world.GetDataStoreError = "DataStore unavailable"
+
+	local ok, err = pcall(function()
+		world:NewServer()
+	end)
+	assert(not ok, "Init должен упасть, а не подменить хранилище")
+	assert(string.find(tostring(err), "DataStore unavailable", 1, true), "исходная причина сохранена")
+end)
+
 return tests

@@ -9,6 +9,7 @@
 local fs = require("@lune/fs")
 local luau = require("@lune/luau")
 local process = require("@lune/process")
+local serde = require("@lune/serde")
 
 local Harness = require("./lib/Harness")
 
@@ -18,6 +19,12 @@ Harness.Configure({
 	end,
 	Load = function(source: string, chunkName: string, env: { [string]: any })
 		return luau.load(source, { debugName = chunkName, environment = env })
+	end,
+	JsonEncode = function(value: any): string
+		return serde.encode("json", value)
+	end,
+	JsonDecode = function(text: string): any
+		return serde.decode("json", text)
 	end,
 })
 

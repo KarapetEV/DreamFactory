@@ -8,3 +8,4 @@ local Systems = ServerScriptService.server.Systems
 require(Systems.DataSystem).Init()
 require(Systems.CollectionSystem).Init()
 require(Systems.FactorySystem).Init()
+require(Systems.PetSystem).Init()

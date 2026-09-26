@@ -1,5 +1,15 @@
 --!strict
 
+-- Экземпляр пета в профиле (раздел 4 ТЗ). Создаёт только PetSystem.HatchCocoon.
+export type PetRecord = {
+	Id: string, -- уникальный GUID экземпляра
+	SpeciesId: string,
+	Rarity: string,
+	Mutation: string?,
+	Level: number,
+	Equipped: boolean,
+}
+
 export type PlayerProfile = {
 	Currency: {
 		Essence: number,
@@ -19,16 +29,7 @@ export type PlayerProfile = {
 		SpeedLevel: number,
 		AutoCollectorOwned: boolean,
 	},
-	Pets: {
-		{
-			Id: string,
-			SpeciesId: string,
-			Rarity: string,
-			Mutation: string?,
-			Level: number,
-			Equipped: boolean,
-		}
-	},
+	Pets: { PetRecord },
 	Rebirth: {
 		Count: number,
 		ClarityMultiplier: number,
@@ -65,6 +66,20 @@ export type EconomySnapshot = {
 	Levels: { [string]: number },
 	-- Id апгрейда, если снимок — ответ сервера на PurchaseUpgrade (успешный или отклонённый).
 	PurchaseAck: string?,
+}
+
+-- Снимок петов, который сервер шлёт владельцу через Remotes.PetSnapshot (раздел 5.3).
+-- Только петы самого игрока; шансов в нём нет. Лимит слотов посчитан сервером.
+export type PetSnapshot = {
+	-- Все петы игрока. nil — ответ на отклонённый запрос: состав не изменился,
+	-- клиент продолжает показывать последний полученный список.
+	Pets: { PetRecord }?,
+	EquipSlots: number,
+	-- Имя ремоуты ("HatchCocoon" / "EquipPet" / "UnequipPet"), если снимок — ответ на запрос
+	-- (успешный или отклонённый); nil — плановая отправка (загрузка профиля).
+	Ack: string?,
+	-- Id только что вылупившегося пета (ответ на успешный HatchCocoon).
+	HatchedPetId: string?,
 }
 
 return {}

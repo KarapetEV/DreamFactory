@@ -8,7 +8,7 @@
 	- поддельный DataStore: UpdateAsync с глубоким копированием и настраиваемой задержкой
 	  каждого вызова (очередь StoreDelays);
 	- загрузчик модулей проекта по дереву default.project.json (ReplicatedStorage.shared,
-	  script.Parent...) с подменой глобалов game/task/os/warn/Enum.
+	  script.Parent...) с подменой глобалов game/task/os/warn/Enum/Random.
 
 	Каждый вызов world:NewServer() загружает модули заново — это отдельный «процесс сервера»
 	со своим состоянием модулей, но общим DataStore мира.
@@ -89,6 +89,11 @@ function Harness.NewWorld()
 	self.GetDataStoreError = nil :: string?
 	-- Что возвращает Players:GetPlayers() внутри мира.
 	self.Players = {} :: { any }
+	-- Источник чисел в [0, 1) для застабленного Random (Random.new():NextNumber()).
+	-- Тест может подменить, чтобы задать исход ролла.
+	self.NextRandom = function(): number
+		return math.random()
+	end
 	self._sleeping = {} :: { { at: number, seq: number, co: thread } }
 	self._seq = 0
 	self._guid = 0
@@ -237,6 +242,16 @@ function World:_makeEnv(moduleCache: { [string]: any }, scriptPath: string?): { 
 		end,
 		clock = function(): number
 			return world.Now
+		end,
+	}
+	env.Random = {
+		new = function(_seed: number?)
+			return {
+				NextNumber = function(_self: any, min: number?, max: number?): number
+					local lo, hi = min or 0, max or 1
+					return lo + world.NextRandom() * (hi - lo)
+				end,
+			}
 		end,
 	}
 	env.Enum = { DataStoreRequestType = { UpdateAsync = "UpdateAsync" } }

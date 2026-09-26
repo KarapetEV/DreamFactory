@@ -53,6 +53,8 @@ export type RemoteRegistry = {
 	HatchCocoon: RemoteEvent,
 	EquipPet: RemoteEvent,
 	UnequipPet: RemoteEvent,
+	-- Сервер → клиент: петы игрока и лимит слотов (Types.PetSnapshot), шлёт PetSystem.
+	PetSnapshot: RemoteEvent,
 	-- RebirthSystem (раздел 5.4)
 	PerformRebirth: RemoteEvent,
 	-- ChaosBossSystem (раздел 5.5)
@@ -68,6 +70,7 @@ local Remotes: RemoteRegistry = {
 	HatchCocoon = getRemoteEvent(folder, "HatchCocoon"),
 	EquipPet = getRemoteEvent(folder, "EquipPet"),
 	UnequipPet = getRemoteEvent(folder, "UnequipPet"),
+	PetSnapshot = getRemoteEvent(folder, "PetSnapshot"),
 	PerformRebirth = getRemoteEvent(folder, "PerformRebirth"),
 	RequestAttackBoss = getRemoteEvent(folder, "RequestAttackBoss"),
 	RequestRaidStart = getRemoteEvent(folder, "RequestRaidStart"),

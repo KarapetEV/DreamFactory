@@ -17,7 +17,8 @@ src/
 ├── server/            # серверная логика (источник истины)
 │   ├── Systems/        # CollectionSystem, FactorySystem, PetSystem, RebirthSystem,
 │   │                    # ChaosBossSystem, PvPRaidSystem, MonetizationSystem, DataSystem
-│   └── Services/        # ProfileStoreService и т.п.
+│   ├── Services/        # ProfileStoreService и т.п.
+│   └── Config/          # server-only конфиги (шансы редкости/мутаций петов) — клиенту не реплицируются
 ├── client/             # только отображение + intent-запросы к серверу
 │   ├── UI/
 │   └── Controllers/

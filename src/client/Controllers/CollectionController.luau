@@ -1,63 +1,107 @@
 --!strict
 
 --[[
-	CollectionController — только intent: по клику/касанию на фрагмент шлёт серверу
-	RequestCollect(fragmentId). Проверки дистанции/кулдауна здесь нет — их делает сервер;
+	CollectionController — автосбор при касании (жанр «симулятор»). Только intent:
+	когда HumanoidRootPart локального игрока касается фрагмента, шлёт серверу
+	RequestCollect(fragmentId). Дистанцию, кулдаун и ёмкость проверяет сервер (CollectionSystem);
 	локальный троттлинг нужен лишь чтобы не спамить remote.
+
+	Touched срабатывает только на само касание, а не пока персонаж стоит на фрагменте. Поэтому
+	запрос, который сервер отклонил (кулдаун после соседнего фрагмента, лаг), потерялся бы навсегда.
+	Касающиеся фрагменты держатся в наборе, и раз в LOCAL_THROTTLE секунд уходит ровно один запрос:
+	по одному фрагменту не чаще RETRY_INTERVAL и не больше MAX_ATTEMPTS раз за касание — иначе при
+	полном складе (сервер оставляет фрагмент в мире) игрок, стоящий на фрагменте, слал бы отказы бесконечно.
+	Новое касание (вышел и вошёл) начинает попытки заново.
 ]]
 
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
-local Remotes = require(ReplicatedStorage.shared.Remotes)
+local Remotes = require(game:GetService("ReplicatedStorage").shared.Remotes)
 
 local FOLDER_NAME = "DreamFragments"
 local ID_ATTRIBUTE = "FragmentId"
-local RAY_LENGTH = 500
+local ROOT_PART_NAME = "HumanoidRootPart"
 local LOCAL_THROTTLE = 0.1
+local RETRY_INTERVAL = 0.4 -- чуть больше серверного кулдауна между сборами
+local MAX_ATTEMPTS = 3
+
+type Touching = {
+	Id: number,
+	Attempts: number,
+	LastSentAt: number,
+}
 
 local CollectionController = {}
 
+local touching: { [BasePart]: Touching } = {}
 local lastRequestAt = 0
 
-local function getFragmentAt(screenPosition: Vector2, folder: Folder): number?
-	local camera = Workspace.CurrentCamera
-	if not camera then
-		return nil
+-- Касание именно корневой частью персонажа локального игрока, а не чужого игрока или посторонней деталью.
+local function isLocalRoot(hit: BasePart): boolean
+	local character = Players.LocalPlayer.Character
+	return character ~= nil and hit.Name == ROOT_PART_NAME and hit.Parent == character
+end
+
+local function trackFragment(instance: Instance)
+	if not instance:IsA("BasePart") then
+		return
+	end
+	local part = instance
+	local id = part:GetAttribute(ID_ATTRIBUTE)
+	if type(id) ~= "number" then
+		return
 	end
 
-	local ray = camera:ScreenPointToRay(screenPosition.X, screenPosition.Y)
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Include
-	params.FilterDescendantsInstances = { folder }
+	-- Сервер создаёт фрагменты с CanTouch = false (они были рассчитаны на клик). Локальное
+	-- включение влияет только на события касания у этого клиента; CanCollide остаётся false,
+	-- поэтому персонаж проходит сквозь фрагмент, а не упирается в него.
+	part.CanTouch = true
 
-	local result = Workspace:Raycast(ray.Origin, ray.Direction * RAY_LENGTH, params)
-	local id = result and result.Instance:GetAttribute(ID_ATTRIBUTE)
-	return if type(id) == "number" then id else nil
+	part.Touched:Connect(function(hit: BasePart)
+		if touching[part] == nil and isLocalRoot(hit) then
+			touching[part] = { Id = id, Attempts = 0, LastSentAt = -math.huge }
+		end
+	end)
+	part.TouchEnded:Connect(function(hit: BasePart)
+		if isLocalRoot(hit) then
+			touching[part] = nil
+		end
+	end)
+end
+
+-- Один запрос за вызов: под общим локальным троттлингом, по фрагментам, чья очередь пришла.
+local function pump()
+	local now = os.clock()
+	if now - lastRequestAt < LOCAL_THROTTLE then
+		return
+	end
+
+	for part, entry in touching do
+		if part.Parent == nil then
+			touching[part] = nil -- фрагмент собран (уничтожен сервером)
+		elseif entry.Attempts < MAX_ATTEMPTS and now - entry.LastSentAt >= RETRY_INTERVAL then
+			entry.Attempts += 1
+			entry.LastSentAt = now
+			lastRequestAt = now
+			Remotes.RequestCollect:FireServer(entry.Id)
+			return
+		end
+	end
 end
 
 function CollectionController.Init()
 	local folder = Workspace:WaitForChild(FOLDER_NAME) :: Folder
 
-	UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean)
-		if gameProcessed then
-			return
-		end
-		if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
-			return
-		end
+	for _, child in folder:GetChildren() do
+		trackFragment(child)
+	end
+	folder.ChildAdded:Connect(trackFragment)
 
-		local now = os.clock()
-		if now - lastRequestAt < LOCAL_THROTTLE then
-			return
-		end
-
-		local fragmentId = getFragmentAt(Vector2.new(input.Position.X, input.Position.Y), folder)
-		if fragmentId then
-			lastRequestAt = now
-			Remotes.RequestCollect:FireServer(fragmentId)
+	task.spawn(function()
+		while true do
+			task.wait(LOCAL_THROTTLE)
+			pump()
 		end
 	end)
 end

@@ -18,6 +18,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local CocoonConfig = require(ReplicatedStorage.shared.Config.CocoonConfig)
+local PetSpeciesConfig = require(ReplicatedStorage.shared.Config.PetSpeciesConfig)
 local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
 
 export type RarityOdds = {
@@ -81,6 +82,10 @@ for cocoonId, odds in PetRarityConfig.Cocoons do
 	for _, entry in odds do
 		assert(type(entry.Rarity) == "string" and entry.Rarity ~= "", `PetRarityConfig: у {cocoonId} редкость без Id`)
 		assert(not seen[entry.Rarity], `PetRarityConfig: у {cocoonId} редкость {entry.Rarity} повторяется`)
+		assert(
+			table.find(PetSpeciesConfig.Rarities, entry.Rarity) ~= nil,
+			`PetRarityConfig: у {cocoonId} редкость {entry.Rarity} отсутствует в PetSpeciesConfig.Rarities`
+		)
 		seen[entry.Rarity] = true
 		assert(
 			isFinite(entry.Chance) and entry.Chance > 0 and entry.Chance <= 1,
@@ -89,6 +94,11 @@ for cocoonId, odds in PetRarityConfig.Cocoons do
 		assert(#entry.Species > 0, `PetRarityConfig: у {cocoonId}/{entry.Rarity} нет видов`)
 		for _, species in entry.Species do
 			assert(type(species) == "string" and species ~= "", `PetRarityConfig: у {cocoonId}/{entry.Rarity} пустой вид`)
+			-- Каждый вид, который может выпасть, обязан иметь эмоцию и бонус (PetSystem.GetAggregatedBonuses).
+			assert(
+				PetSpeciesConfig.Species[species],
+				`PetRarityConfig: вид {species} ({cocoonId}) отсутствует в PetSpeciesConfig`
+			)
 		end
 		sum += entry.Chance
 	end

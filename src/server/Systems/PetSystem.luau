@@ -19,6 +19,15 @@
 	  Если слотов стало меньше, чем уже надето (например, геймпасс отозван), лишние
 	  не снимаются автоматически, но новые не надеваются, пока не освободится слот.
 
+	Бонусы петов (раздел 5.3, S8):
+	- GetAggregatedBonuses(data) — чистая функция: множители конвейера (Joyful) и радиуса
+	  сбора (Nostalgic) по надетым петам, не больше GetEquipSlots(data) штук в порядке
+	  инвентаря (если слотов стало меньше, чем надето, лишние не дают бонус). Fearful
+	  занимают слот, но вклада пока не дают — заготовка под S13/S17;
+	- результат кэшируется в runtime-состоянии игрока (не в DataStore) и пересчитывается
+	  только при загрузке профиля и успешном EquipPet/UnequipPet. FactorySystem и
+	  CollectionSystem читают кэш через GetCachedBonuses; нет кэша или он битый — 1.0.
+
 	Ответ (Remotes.PetSnapshot): на каждый запрос, прошедший rate limit, — снимок с Ack;
 	плюс полный снимок после загрузки профиля. Только собственные данные игрока. На отказ
 	список петов не шлём (Pets = nil): состав не изменился, а полный инвентарь в ответ на
@@ -34,6 +43,7 @@ local Remotes = require(ReplicatedStorage.shared.Remotes)
 local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
 local CocoonConfig = require(ReplicatedStorage.shared.Config.CocoonConfig)
 local PetConfig = require(ReplicatedStorage.shared.Config.PetConfig)
+local PetSpeciesConfig = require(ReplicatedStorage.shared.Config.PetSpeciesConfig)
 local PetRarityConfig = require(script.Parent.Parent.Config.PetRarityConfig)
 local DataSystem = require(script.Parent.DataSystem)
 local RateLimiter = require(script.Parent.Parent.Services.RateLimiter)
@@ -50,6 +60,12 @@ type PlayerState = {
 
 -- Источник случайности ролла: NextNumber() в [0, 1).
 export type RandomSource = { NextNumber: (self: any) -> number }
+
+-- Агрегированный бонус надетых петов: множители поверх формулы UpgradeEffects (1 = без бонуса).
+export type AggregatedBonuses = {
+	ConveyorSpeedMultiplier: number, -- скорость конвейера: задержка цикла делится на него
+	CollectionRadiusMultiplier: number, -- радиус сбора умножается на него
+}
 
 export type RollResult = {
 	SpeciesId: string,
@@ -75,6 +91,8 @@ local PetSystem = {}
 
 local rng = Random.new()
 local playerStates: { [Player]: PlayerState } = {}
+-- Кэш агрегированного бонуса надетых петов (runtime, не персистится).
+local bonusCache: { [Player]: AggregatedBonuses } = {}
 -- Игроки, чей FireServer на односторонний PetSnapshot уже записан в лог. Ключи слабые.
 local reportedForeignFires: { [Player]: true } = setmetatable({}, { __mode = "k" }) :: any
 
@@ -201,6 +219,119 @@ function PetSystem.GetEquipSlots(data: PlayerProfile): number
 		slots += PetConfig.ExtraEquipSlots
 	end
 	return slots
+end
+
+local function neutralBonuses(): AggregatedBonuses
+	return { ConveyorSpeedMultiplier = 1, CollectionRadiusMultiplier = 1 }
+end
+
+-- Бонус одного пета с учётом мутации; 0 — неизвестный вид/редкость (битая запись не даёт бонуса).
+local function petBonus(pet: PetRecord): (string?, number)
+	local species = PetSpeciesConfig.Species[pet.SpeciesId]
+	if not species then
+		return nil, 0
+	end
+	local bonus = species.BonusPerRarity[pet.Rarity]
+	if not isFinite(bonus) or bonus <= 0 then
+		return species.EmotionType, 0
+	end
+	if type(pet.Mutation) == "string" then
+		bonus *= 1 + PetSpeciesConfig.MutationBonusFraction
+	end
+	return species.EmotionType, bonus
+end
+
+local function toMultiplier(sum: number): number
+	local multiplier = 1 + sum
+	if not isFinite(multiplier) then
+		return 1
+	end
+	return math.clamp(multiplier, 1, PetSpeciesConfig.MaxMultiplier)
+end
+
+-- Чистая функция: множители по надетым петам профиля. Считает не больше GetEquipSlots(data)
+-- надетых в порядке инвентаря; весь инвентарь (не надетые) не учитывается. Без yield.
+function PetSystem.GetAggregatedBonuses(data: PlayerProfile): AggregatedBonuses
+	local pets = data.Pets
+	if type(pets) ~= "table" then
+		return neutralBonuses()
+	end
+
+	local slots = PetSystem.GetEquipSlots(data)
+	local joyful, nostalgic = 0, 0
+	local counted = 0
+	for _, pet in pets do
+		if counted >= slots then
+			break
+		end
+		if type(pet) == "table" and pet.Equipped == true then
+			counted += 1
+			local emotion, bonus = petBonus(pet)
+			if emotion == "Joyful" then
+				joyful += bonus
+			elseif emotion == "Nostalgic" then
+				nostalgic += bonus
+			end
+			-- Fearful: слот занят, вклад — в S13 (личный Хаос) и S17 (PvP-оборона).
+		end
+	end
+
+	return {
+		ConveyorSpeedMultiplier = toMultiplier(joyful),
+		CollectionRadiusMultiplier = toMultiplier(nostalgic),
+	}
+end
+
+local function validMultiplier(value: unknown): boolean
+	return isFinite(value) and (value :: number) >= 1 and (value :: number) <= PetSpeciesConfig.MaxMultiplier
+end
+
+-- Пересчёт кэша игрока. Ошибка (битый профиль) или мусорный результат — кэш сбрасывается,
+-- потребители получают 1.0; предупреждение — один раз за сессию.
+local function refreshBonuses(player: Player, data: PlayerProfile)
+	if player.Parent == nil then
+		return -- вышедшему игроку кэш не создаём: его уже никто не очистит
+	end
+	local ok, result = pcall(PetSystem.GetAggregatedBonuses, data)
+	if
+		ok
+		and type(result) == "table"
+		and validMultiplier(result.ConveyorSpeedMultiplier)
+		and validMultiplier(result.CollectionRadiusMultiplier)
+	then
+		bonusCache[player] = {
+			ConveyorSpeedMultiplier = result.ConveyorSpeedMultiplier,
+			CollectionRadiusMultiplier = result.CollectionRadiusMultiplier,
+		}
+	else
+		bonusCache[player] = nil
+		reportCorruption(player, `ошибка расчёта бонусов петов: {if ok then "некорректный результат" else result}`)
+	end
+end
+
+-- Пересчитать кэш бонусов вне Equip/Unequip — для будущей синхронизации геймпассов
+-- (MonetizationSystem: смена числа слотов меняет, какие петы дают бонус).
+function PetSystem.RefreshBonuses(player: Player)
+	local data = DataSystem.GetData(player)
+	if data then
+		refreshBonuses(player, data)
+	end
+end
+
+-- Кэшированный бонус игрока — копия, чтобы потребитель не мог испортить кэш. Нет кэша
+-- или значение битое — 1.0 (без бонуса), без ошибки.
+function PetSystem.GetCachedBonuses(player: Player): AggregatedBonuses
+	local cached = bonusCache[player]
+	local result = neutralBonuses()
+	if type(cached) == "table" then
+		if validMultiplier(cached.ConveyorSpeedMultiplier) then
+			result.ConveyorSpeedMultiplier = cached.ConveyorSpeedMultiplier
+		end
+		if validMultiplier(cached.CollectionRadiusMultiplier) then
+			result.CollectionRadiusMultiplier = cached.CollectionRadiusMultiplier
+		end
+	end
+	return result
 end
 
 -- Список петов профиля; nil — раздел Pets испорчен: не таблица или не плотный массив
@@ -336,6 +467,7 @@ local function tryEquip(player: Player, petId: unknown): string?
 	end
 
 	pet.Equipped = true
+	refreshBonuses(player, data)
 	return nil
 end
 
@@ -361,6 +493,7 @@ local function tryUnequip(player: Player, petId: unknown): string?
 	end
 
 	pet.Equipped = false
+	refreshBonuses(player, data)
 	return nil
 end
 
@@ -453,6 +586,7 @@ local function sendInitialSnapshot(player: Player)
 	task.spawn(function()
 		local data = DataSystem.WaitForData(player)
 		if data and player.Parent ~= nil then
+			refreshBonuses(player, data)
 			sendSnapshot(player, true, nil, nil)
 		end
 	end)
@@ -479,6 +613,7 @@ function PetSystem.Init()
 
 	Players.PlayerRemoving:Connect(function(player)
 		playerStates[player] = nil
+		bonusCache[player] = nil
 		reportedForeignFires[player] = nil
 	end)
 end

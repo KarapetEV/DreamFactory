@@ -8,6 +8,8 @@
 	- Клиенту не доверяем ничего, кроме id: позиция фрагмента берётся из серверного реестра,
 	  позиция игрока — из его персонажа на сервере, радиус/кулдаун/ёмкость — из уровней профиля
 	  и UpgradeConfig (UpgradeEffects зажимает уровень в [0, MaxLevel] — эффект не растёт без предела).
+	- Радиус сбора = значение апгрейда (UpgradeEffects) × CollectionRadiusMultiplier надетых
+	  Nostalgic-петов из кэша PetSystem (без кэша — 1; на каждый запрос не пересчитывается).
 	- Сбор — одна функция без yield между проверками и записью: фрагмент забирает ровно один игрок,
 	  буфер не выходит за ёмкость склада.
 ]]
@@ -22,6 +24,7 @@ local BiomeConfig = require(ReplicatedStorage.shared.Config.BiomeConfig)
 local CollectionConfig = require(ReplicatedStorage.shared.Config.CollectionConfig)
 local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
 local DataSystem = require(script.Parent.DataSystem)
+local PetSystem = require(script.Parent.PetSystem)
 local RateLimiter = require(script.Parent.Parent.Services.RateLimiter)
 
 type PlayerProfile = Types.PlayerProfile
@@ -174,9 +177,11 @@ local function spawnTick(folder: Folder)
 	end
 end
 
--- Радиус не больше значения на MaxLevel: уровень из профиля зажимается в UpgradeEffects (M-1).
-local function getCollectRadius(data: PlayerProfile): number
+-- Радиус апгрейда не больше значения на MaxLevel: уровень из профиля зажимается в
+-- UpgradeEffects (M-1); бонус петов поверх зажат PetSpeciesConfig.MaxMultiplier.
+local function getCollectRadius(player: Player, data: PlayerProfile): number
 	return UpgradeEffects.GetEffectValue("CollectionRadius", data.Collection.RadiusLevel)
+		* PetSystem.GetCachedBonuses(player).CollectionRadiusMultiplier
 end
 
 local function getCooldown(data: PlayerProfile): number
@@ -216,7 +221,7 @@ local function tryCollect(player: Player, fragmentId: unknown, now: number): str
 		return "no-character"
 	end
 
-	local maxDistance = getCollectRadius(data) + CollectionConfig.DistanceTolerance
+	local maxDistance = getCollectRadius(player, data) + CollectionConfig.DistanceTolerance
 	if (root.Position - fragment.Position).Magnitude > maxDistance then
 		return "too-far"
 	end

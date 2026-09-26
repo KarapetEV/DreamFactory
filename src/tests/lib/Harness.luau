@@ -8,7 +8,9 @@
 	- поддельный DataStore: UpdateAsync с глубоким копированием и настраиваемой задержкой
 	  каждого вызова (очередь StoreDelays);
 	- загрузчик модулей проекта по дереву default.project.json (ReplicatedStorage.shared,
-	  script.Parent...) с подменой глобалов game/task/os/warn/Enum/Random.
+	  script.Parent...) с подменой глобалов game/task/os/warn/Enum/Random;
+	- минимальные заглушки Instance.new/Vector3/Color3/UDim2 и Workspace — столько,
+	  сколько нужно CollectionSystem (созданные инстансы копятся в world.Instances).
 
 	Каждый вызов world:NewServer() загружает модули заново — это отдельный «процесс сервера»
 	со своим состоянием модулей, но общим DataStore мира.
@@ -70,6 +72,24 @@ local function pathNode(path: string): any
 	})
 end
 
+-- Vector3: X/Y/Z, сложение, вычитание, Magnitude — достаточно для проверок дистанции.
+local Vector3Meta = {}
+local function newVector3(x: number?, y: number?, z: number?): any
+	return setmetatable({ X = x or 0, Y = y or 0, Z = z or 0 }, Vector3Meta)
+end
+Vector3Meta.__index = function(v, key)
+	if key == "Magnitude" then
+		return math.sqrt(v.X * v.X + v.Y * v.Y + v.Z * v.Z)
+	end
+	return nil
+end
+Vector3Meta.__add = function(a, b)
+	return newVector3(a.X + b.X, a.Y + b.Y, a.Z + b.Z)
+end
+Vector3Meta.__sub = function(a, b)
+	return newVector3(a.X - b.X, a.Y - b.Y, a.Z - b.Z)
+end
+
 local World = {}
 World.__index = World
 
@@ -94,6 +114,8 @@ function Harness.NewWorld()
 	self.NextRandom = function(): number
 		return math.random()
 	end
+	-- Все инстансы, созданные через Instance.new внутри мира (в порядке создания).
+	self.Instances = {} :: { any }
 	self._sleeping = {} :: { { at: number, seq: number, co: thread } }
 	self._seq = 0
 	self._guid = 0
@@ -211,6 +233,7 @@ function World:_makeEnv(moduleCache: { [string]: any }, scriptPath: string?): { 
 				return true
 			end,
 		},
+		Workspace = { Name = "Workspace" },
 		Players = {
 			PlayerAdded = signal,
 			PlayerRemoving = signal,
@@ -254,7 +277,51 @@ function World:_makeEnv(moduleCache: { [string]: any }, scriptPath: string?): { 
 			}
 		end,
 	}
-	env.Enum = { DataStoreRequestType = { UpdateAsync = "UpdateAsync" } }
+	env.Enum = {
+		DataStoreRequestType = { UpdateAsync = "UpdateAsync" },
+		PartType = { Ball = "Ball" },
+		Material = { Neon = "Neon" },
+	}
+	env.Vector3 = { new = newVector3 }
+	env.Color3 = {
+		new = function(r, g, b)
+			return { R = r, G = g, B = b }
+		end,
+		fromRGB = function(r, g, b)
+			return { R = r / 255, G = g / 255, B = b / 255 }
+		end,
+	}
+	env.UDim2 = {
+		fromOffset = function(x, y)
+			return { Offset = { x, y } }
+		end,
+		fromScale = function(x, y)
+			return { Scale = { x, y } }
+		end,
+	}
+	env.Instance = {
+		new = function(className: string)
+			local attributes = {}
+			local instance = {
+				ClassName = className,
+				SetAttribute = function(_self, key, value)
+					attributes[key] = value
+				end,
+				GetAttribute = function(_self, key)
+					return attributes[key]
+				end,
+				IsA = function(self, name)
+					return self.ClassName == name
+				end,
+				Destroy = function(self)
+					self.Destroyed = true
+					self.Parent = nil
+				end,
+			}
+			table.insert(world.Instances, instance)
+			return instance
+		end,
+	}
 	env.game = {
 		PlaceId = 1,
 		JobId = "",

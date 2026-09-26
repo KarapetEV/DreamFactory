@@ -8,7 +8,9 @@
 	- серверный тик раз в FactoryConfig.TickInterval; у каждого игрока за цикл
 	  FragmentsPerCycle сырых фрагментов (Factory.RawFragments) превращаются в Essence;
 	- задержка цикла на каждом тике заново вычисляется из Factory.ConveyorSpeedLevel
-	  и UpgradeConfig (не кэшируется) — апгрейд действует со следующего тика;
+	  и UpgradeConfig (не кэшируется) — апгрейд действует со следующего тика; поверх неё —
+	  бонус надетых Joyful-петов: задержка делится на ConveyorSpeedMultiplier из кэша
+	  PetSystem (сам бонус на тике не пересчитывается);
 	- выход умножается на Rebirth.ClarityMultiplier (раздел 5.4) и перед записью
 	  проверяется на конечность; после записи — событие OnEssenceProduced(player, amount).
 
@@ -38,7 +40,9 @@ local Signal = require(ReplicatedStorage.shared.Signal)
 local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
 local UpgradeConfig = require(ReplicatedStorage.shared.Config.UpgradeConfig)
 local FactoryConfig = require(ReplicatedStorage.shared.Config.FactoryConfig)
+local PetSpeciesConfig = require(ReplicatedStorage.shared.Config.PetSpeciesConfig)
 local DataSystem = require(script.Parent.DataSystem)
+local PetSystem = require(script.Parent.PetSystem)
 local RateLimiter = require(script.Parent.Parent.Services.RateLimiter)
 
 type PlayerProfile = Types.PlayerProfile
@@ -66,9 +70,11 @@ do
 	for _, step in conveyor.Levels do
 		minDelay = math.min(minDelay, step.Value)
 	end
+	-- С максимальным бонусом петов задержка делится на PetSpeciesConfig.MaxMultiplier.
+	minDelay /= PetSpeciesConfig.MaxMultiplier
 	assert(
 		minDelay >= FactoryConfig.TickInterval,
-		`FactorySystem: задержка конвейера {minDelay} меньше TickInterval {FactoryConfig.TickInterval}`
+		`FactorySystem: задержка конвейера с бонусом петов {minDelay} меньше TickInterval {FactoryConfig.TickInterval}`
 	)
 end
 assert(
@@ -337,8 +343,11 @@ local function runConveyor(player: Player, data: PlayerProfile, now: number)
 		return
 	end
 
-	-- Задержка — из текущего уровня на каждом тике (уровень зажат в [0, MaxLevel]).
+	-- Задержка — из текущего уровня на каждом тике (уровень зажат в [0, MaxLevel]), поверх —
+	-- кэшированный бонус петов (множитель ≥ 1, без кэша — 1). Задержка ниже TickInterval
+	-- ничего не ломает: за тик всё равно не больше одного цикла.
 	local delay = UpgradeEffects.GetEffectValue("ConveyorSpeed", factory.ConveyorSpeedLevel)
+		/ PetSystem.GetCachedBonuses(player).ConveyorSpeedMultiplier
 	if now - state.LastCycleAt < delay then
 		return
 	end

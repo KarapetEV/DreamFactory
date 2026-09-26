@@ -27,6 +27,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Types = require(ReplicatedStorage.shared.Types)
 local BiomeConfig = require(ReplicatedStorage.shared.Config.BiomeConfig)
 local StartingProfileConfig = require(ReplicatedStorage.shared.Config.StartingProfileConfig)
+local RebirthProgress = require(ReplicatedStorage.shared.RebirthProgress)
 local ProfileStoreService = require(script.Parent.Parent.Services.ProfileStoreService)
 
 type PlayerProfile = Types.PlayerProfile
@@ -212,6 +213,26 @@ function DataSystem.MigrateProfileData(data: any): (PlayerProfile?, string?, Mig
 
 	reconcile(data, DataSystem.BuildDefaultProfile())
 	data.Meta.SchemaVersion = CURRENT_SCHEMA_VERSION
+
+	-- ClarityMultiplier и CurrentBiome — производные от Rebirth.Count и BiomeConfig, а пишутся
+	-- только при rebirth. Перезаписываем на каждой загрузке: сохранённое значение не
+	-- доверяется (сменился баланс, старый или испорченный профиль). Count не трогаем; если он
+	-- сам битый — пересчёта нет, об этом сообщит RebirthSystem при попытке rebirth.
+	local rebirth = data.Rebirth
+	if type(rebirth) == "table" then
+		local count = rebirth.Count
+		if
+			type(count) == "number"
+			and count == count
+			and count ~= math.huge
+			and count >= 0
+			and count % 1 == 0
+		then
+			local progress = RebirthProgress.Compute(count)
+			rebirth.ClarityMultiplier = progress.ClarityMultiplier
+			rebirth.CurrentBiome = progress.CurrentBiome
+		end
+	end
 
 	return data :: PlayerProfile, nil
 end

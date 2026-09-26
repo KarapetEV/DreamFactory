@@ -23,9 +23,11 @@
 	  ёмкость/скорость/радиус вычисляются из него на каждое обращение (UpgradeEffects).
 
 	Снимок для HUD (Remotes.EconomySnapshot, раздел 5.8):
-	- владельцу уходит только его Essence, RawFragments и уровни апгрейдов — ничего о других игроках;
+	- владельцу уходит только его Essence, RawFragments, уровни апгрейдов и прогресс rebirth
+	  (Count, ClarityMultiplier, CurrentBiome) — ничего о других игроках;
 	- на тике сравнивается с последним отправленным: первый снимок после загрузки профиля
-	  и смена уровней — сразу, изменение только Essence/RawFragments — не чаще SnapshotInterval.
+	  и смена уровней/прогресса rebirth — сразу, изменение только Essence/RawFragments — не
+	  чаще SnapshotInterval.
 	  Сравнение, а не отправка из мест записи, ловит изменения из любых систем;
 	- ответ на каждый PurchaseUpgrade, прошедший rate limit, — снимок с PurchaseAck сразу:
 	  клиент по нему разблокирует кнопку и берёт следующий targetLevel только из снимка.
@@ -233,16 +235,25 @@ local function tryPurchase(player: Player, upgradeId: unknown, targetLevel: unkn
 	return nil
 end
 
-local function buildSnapshot(data: PlayerProfile, purchaseAck: string?): Types.EconomySnapshot
+-- Единственное место сборки EconomySnapshot (ответы на PurchaseUpgrade, тик и
+-- FactorySystem.PushSnapshot для других систем, например RebirthSystem).
+local function buildSnapshot(data: PlayerProfile, purchaseAck: string?, rebirthAck: boolean?): Types.EconomySnapshot
 	local levels: { [string]: number } = {}
 	for id, track in UpgradeConfig do
 		levels[id] = getLevel(data, track.Id)
 	end
+	-- Rebirth читаем защищённо: битый раздел не должен блокировать ответ на покупку
+	-- (сам конвейер на таком профиле сообщит о порче в лог).
+	local rebirth: any = if type(data.Rebirth) == "table" then data.Rebirth else {}
 	return {
 		Essence = data.Currency.Essence,
 		RawFragments = data.Factory.RawFragments,
 		Levels = levels,
 		PurchaseAck = purchaseAck,
+		RebirthCount = if type(rebirth.Count) == "number" then rebirth.Count else 0,
+		ClarityMultiplier = if type(rebirth.ClarityMultiplier) == "number" then rebirth.ClarityMultiplier else 1,
+		CurrentBiome = if type(rebirth.CurrentBiome) == "string" then rebirth.CurrentBiome else "",
+		RebirthAck = rebirthAck,
 	}
 end
 
@@ -257,7 +268,7 @@ local function sendSnapshot(player: Player, state: PlayerState, snapshot: Types.
 	Remotes.EconomySnapshot:FireClient(player, snapshot)
 end
 
--- Отправка снимка, если он изменился: уровни — сразу, Essence/RawFragments — не чаще SnapshotInterval.
+-- Отправка снимка, если он изменился: уровни и прогресс rebirth — сразу, Essence/RawFragments — не чаще SnapshotInterval.
 local function syncSnapshot(player: Player, data: PlayerProfile, now: number)
 	local state = getPlayerState(player)
 	local snapshot = buildSnapshot(data, nil)
@@ -274,6 +285,16 @@ local function syncSnapshot(player: Player, data: PlayerProfile, now: number)
 		if
 			not dirty
 			and (
+				not sameNumber(snapshot.RebirthCount, sent.RebirthCount)
+				or not sameNumber(snapshot.ClarityMultiplier, sent.ClarityMultiplier)
+				or snapshot.CurrentBiome ~= sent.CurrentBiome
+			)
+		then
+			dirty = true
+		end
+		if
+			not dirty
+			and (
 				not sameNumber(snapshot.Essence, sent.Essence)
 				or not sameNumber(snapshot.RawFragments, sent.RawFragments)
 			)
@@ -286,6 +307,33 @@ local function syncSnapshot(player: Player, data: PlayerProfile, now: number)
 	if dirty then
 		sendSnapshot(player, state, snapshot, now)
 	end
+end
+
+-- Немедленная отправка владельцу актуального снимка (вне расписания тика). Ошибка сборки
+-- (битый раздел профиля) изолируется и пишется в лог один раз: вызывающая транзакция
+-- к этому моменту уже выполнена.
+-- context — что за ответ собирался (для лога).
+local function pushSnapshot(player: Player, context: string, purchaseAck: string?, rebirthAck: boolean?)
+	local state = getPlayerState(player)
+	local ok, err = pcall(function()
+		local data = DataSystem.GetData(player)
+		if data then
+			sendSnapshot(player, state, buildSnapshot(data, purchaseAck, rebirthAck), os.clock())
+		end
+	end)
+	if not ok then
+		reportCorruption(player, `ошибка сборки {context}: {err}`)
+	end
+end
+
+-- Публичный API для систем, меняющих экономику игрока вне FactorySystem (RebirthSystem):
+-- снимок уходит сразу и собирается здесь же — второй сборки EconomySnapshot нет.
+-- rebirthAck — ответ на PerformRebirth (true — выполнен, false — отклонён).
+function FactorySystem.PushSnapshot(player: Player, rebirthAck: boolean?)
+	if player.Parent == nil then
+		return -- вышедшему игроку state не создаём: его уже никто не очистит
+	end
+	pushSnapshot(player, "снимка экономики", nil, rebirthAck)
 end
 
 local function onPurchaseUpgrade(player: Player, upgradeId: unknown, targetLevel: unknown)
@@ -314,17 +362,9 @@ local function onPurchaseUpgrade(player: Player, upgradeId: unknown, targetLevel
 	-- разблокирует кнопку. PurchaseAck — только валидный id из конфига, не эхо строки клиента.
 	-- Сборка снимка читает уровни всех треков: битый раздел профиля (например Collection не
 	-- таблица) бросает ошибку даже после успешной покупки другого трека. Транзакция уже
-	-- выполнена; ошибку ответа изолируем и пишем в лог один раз за сессию.
-	local ok, err = pcall(function()
-		local data = DataSystem.GetData(player)
-		if data then
-			local ack = if type(upgradeId) == "string" and UpgradeEffects.GetTrack(upgradeId) then upgradeId else nil
-			sendSnapshot(player, state, buildSnapshot(data, ack), now)
-		end
-	end)
-	if not ok then
-		reportCorruption(player, `ошибка сборки ответа на покупку: {err}`)
-	end
+	-- выполнена; ошибку ответа изолируем и пишем в лог один раз за сессию (pushSnapshot).
+	local ack = if type(upgradeId) == "string" and UpgradeEffects.GetTrack(upgradeId) then upgradeId else nil
+	pushSnapshot(player, "ответа на покупку", ack, nil)
 end
 
 -- Один тик конвейера игрока: не больше одного цикла переработки. Без yield.

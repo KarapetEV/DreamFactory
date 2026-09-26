@@ -66,6 +66,13 @@ export type EconomySnapshot = {
 	Levels: { [string]: number },
 	-- Id апгрейда, если снимок — ответ сервера на PurchaseUpgrade (успешный или отклонённый).
 	PurchaseAck: string?,
+	-- Прогресс rebirth (раздел 5.4): для кнопки Rebirth и прогресс-бара (раздел 5.8).
+	-- Порог клиент берёт из RebirthConfig, сам rebirth решает только сервер.
+	RebirthCount: number,
+	ClarityMultiplier: number,
+	CurrentBiome: string,
+	-- Ответ на PerformRebirth: true — rebirth выполнен, false — отклонён; nil — не ответ на rebirth.
+	RebirthAck: boolean?,
 }
 
 -- Снимок петов, который сервер шлёт владельцу через Remotes.PetSnapshot (раздел 5.3).

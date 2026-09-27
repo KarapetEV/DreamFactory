@@ -14,6 +14,8 @@ export type BiomeDefinition = {
 	DisplayName: string,
 	RebirthThreshold: number,
 	ClarityMultiplierBonus: number,
+	-- Арт-заглушка: цвет фрагмента снов в этом биоме (CollectionSystem красит Part при спавне).
+	FragmentColor: Color3,
 }
 
 local BiomeConfig: { [string]: BiomeDefinition } = {
@@ -22,12 +24,21 @@ local BiomeConfig: { [string]: BiomeDefinition } = {
 		DisplayName = "Сонный луг",
 		RebirthThreshold = 0,
 		ClarityMultiplierBonus = 0,
+		FragmentColor = Color3.fromRGB(170, 140, 255),
 	},
 	Nightmares = {
 		Id = "Nightmares",
 		DisplayName = "Кошмары",
 		RebirthThreshold = 5,
 		ClarityMultiplierBonus = 0.5,
+		FragmentColor = Color3.fromRGB(70, 15, 90), -- тёмно-фиолетовый (GDD 5.7: гнетущая тьма)
+	},
+	LucidDreams = {
+		Id = "LucidDreams",
+		DisplayName = "Люцидные Сны",
+		RebirthThreshold = 10,
+		ClarityMultiplierBonus = 1,
+		FragmentColor = Color3.fromRGB(150, 220, 255), -- светло-голубой (GDD 5.7: ясность, контроль)
 	},
 }
 
@@ -56,6 +67,11 @@ do
 		assert(
 			isFinite(biome.ClarityMultiplierBonus) and biome.ClarityMultiplierBonus >= 0,
 			`BiomeConfig: у {key} некорректный ClarityMultiplierBonus {biome.ClarityMultiplierBonus}`
+		)
+		local color = biome.FragmentColor
+		assert(
+			color ~= nil and isFinite(color.R) and isFinite(color.G) and isFinite(color.B),
+			`BiomeConfig: у {key} некорректный FragmentColor`
 		)
 	end
 	assert(zeroCount == 1, `BiomeConfig: биомов с RebirthThreshold = 0 должно быть ровно 1, а их {zeroCount}`)

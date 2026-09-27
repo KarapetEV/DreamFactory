@@ -143,13 +143,13 @@ local function removeFragment(fragment: Fragment)
 	fragment.Part:Destroy()
 end
 
-local function createFragmentPart(id: number, position: Vector3): Part
+local function createFragmentPart(id: number, position: Vector3, color: Color3): Part
 	local part = Instance.new("Part")
 	part.Name = `DreamFragment_{id}`
 	part.Shape = Enum.PartType.Ball
 	part.Size = Vector3.new(2, 2, 2)
 	part.Material = Enum.Material.Neon
-	part.Color = Color3.fromRGB(170, 140, 255)
+	part.Color = color
 	part.Anchored = true
 	part.CanCollide = false
 	part.CanTouch = false
@@ -192,7 +192,7 @@ local function spawnFragmentInZone(zone: CollectionConfig.ZoneDefinition, folder
 	local id = nextFragmentId
 	nextFragmentId += 1
 
-	local part = createFragmentPart(id, position)
+	local part = createFragmentPart(id, position, BiomeConfig[zone.BiomeId].FragmentColor)
 	fragments[id] = {
 		Id = id,
 		Part = part,

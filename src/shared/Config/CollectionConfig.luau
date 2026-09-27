@@ -50,6 +50,34 @@ local CollectionConfig: CollectionDefinition = {
 			},
 			MaxFragments = 5,
 		},
+		-- Смещена по Z на +100 относительно DreamMeadowZone1 — точки спавна не пересекаются.
+		{
+			Id = "NightmaresZone1",
+			BiomeId = "Nightmares",
+			SpawnPoints = {
+				Vector3.new(0, 3, 120),
+				Vector3.new(15, 3, 130),
+				Vector3.new(-15, 3, 130),
+				Vector3.new(25, 3, 110),
+				Vector3.new(-25, 3, 110),
+				Vector3.new(0, 3, 145),
+			},
+			MaxFragments = 5,
+		},
+		-- Смещена по Z на +200 относительно DreamMeadowZone1 — точки спавна не пересекаются.
+		{
+			Id = "LucidDreamsZone1",
+			BiomeId = "LucidDreams",
+			SpawnPoints = {
+				Vector3.new(0, 3, 220),
+				Vector3.new(15, 3, 230),
+				Vector3.new(-15, 3, 230),
+				Vector3.new(25, 3, 210),
+				Vector3.new(-25, 3, 210),
+				Vector3.new(0, 3, 245),
+			},
+			MaxFragments = 5,
+		},
 	},
 }
 

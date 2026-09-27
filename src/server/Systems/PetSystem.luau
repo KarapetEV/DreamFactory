@@ -23,7 +23,9 @@
 	- GetAggregatedBonuses(data) — чистая функция: множители конвейера (Joyful) и радиуса
 	  сбора (Nostalgic) по надетым петам, не больше GetEquipSlots(data) штук в порядке
 	  инвентаря (если слотов стало меньше, чем надето, лишние не дают бонус). Fearful
-	  занимают слот, но вклада пока не дают — заготовка под S13/S17;
+	  (S17) — сумма их бонусов FearfulDefense: очки PvP-обороны, которые PvPRaidSystem
+	  складывает со стражами в формуле защиты (GuardConfig). «Цена» Fearful (личный Хаос) —
+	  не здесь, открытый пункт ChaosBossSystem;
 	- результат кэшируется в runtime-состоянии игрока (не в DataStore) и пересчитывается
 	  только при загрузке профиля и успешном EquipPet/UnequipPet. FactorySystem и
 	  CollectionSystem читают кэш через GetCachedBonuses; нет кэша или он битый — 1.0.
@@ -66,6 +68,9 @@ export type RandomSource = { NextNumber: (self: any) -> number }
 export type AggregatedBonuses = {
 	ConveyorSpeedMultiplier: number, -- скорость конвейера: задержка цикла делится на него
 	CollectionRadiusMultiplier: number, -- радиус сбора умножается на него
+	-- Σ бонусов надетых Fearful (не множитель, ≥ 0): очки PvP-обороны; в долю защиты их
+	-- переводит PvPRaidSystem по GuardConfig.FearfulPetDefenseScale.
+	FearfulDefense: number,
 }
 
 export type RollResult = {
@@ -233,7 +238,7 @@ function PetSystem.GetEquipSlots(data: PlayerProfile): number
 end
 
 local function neutralBonuses(): AggregatedBonuses
-	return { ConveyorSpeedMultiplier = 1, CollectionRadiusMultiplier = 1 }
+	return { ConveyorSpeedMultiplier = 1, CollectionRadiusMultiplier = 1, FearfulDefense = 0 }
 end
 
 -- Бонус одного пета с учётом мутации; 0 — неизвестный вид/редкость (битая запись не даёт бонуса).
@@ -260,6 +265,19 @@ local function toMultiplier(sum: number): number
 	return math.clamp(multiplier, 1, PetSpeciesConfig.MaxMultiplier)
 end
 
+-- Оборона Fearful — сумма бонусов с той же верхней границей стака, что у множителей
+-- (≤ MaxMultiplier − 1); мусор — 0 (без обороны).
+local function toDefense(sum: number): number
+	if not isFinite(sum) then
+		return 0
+	end
+	return math.clamp(sum, 0, PetSpeciesConfig.MaxMultiplier - 1)
+end
+
+local function validDefense(value: unknown): boolean
+	return isFinite(value) and (value :: number) >= 0 and (value :: number) <= PetSpeciesConfig.MaxMultiplier - 1
+end
+
 -- Чистая функция: множители по надетым петам профиля. Считает не больше GetEquipSlots(data)
 -- надетых в порядке инвентаря; весь инвентарь (не надетые) не учитывается. Без yield.
 function PetSystem.GetAggregatedBonuses(data: PlayerProfile): AggregatedBonuses
@@ -269,7 +287,7 @@ function PetSystem.GetAggregatedBonuses(data: PlayerProfile): AggregatedBonuses
 	end
 
 	local slots = PetSystem.GetEquipSlots(data)
-	local joyful, nostalgic = 0, 0
+	local joyful, nostalgic, fearful = 0, 0, 0
 	local counted = 0
 	for _, pet in pets do
 		if counted >= slots then
@@ -282,14 +300,16 @@ function PetSystem.GetAggregatedBonuses(data: PlayerProfile): AggregatedBonuses
 				joyful += bonus
 			elseif emotion == "Nostalgic" then
 				nostalgic += bonus
+			elseif emotion == "Fearful" then
+				fearful += bonus
 			end
-			-- Fearful: слот занят, вклад — в S13 (личный Хаос) и S17 (PvP-оборона).
 		end
 	end
 
 	return {
 		ConveyorSpeedMultiplier = toMultiplier(joyful),
 		CollectionRadiusMultiplier = toMultiplier(nostalgic),
+		FearfulDefense = toDefense(fearful),
 	}
 end
 
@@ -309,10 +329,12 @@ local function refreshBonuses(player: Player, data: PlayerProfile)
 		and type(result) == "table"
 		and validMultiplier(result.ConveyorSpeedMultiplier)
 		and validMultiplier(result.CollectionRadiusMultiplier)
+		and validDefense(result.FearfulDefense)
 	then
 		bonusCache[player] = {
 			ConveyorSpeedMultiplier = result.ConveyorSpeedMultiplier,
 			CollectionRadiusMultiplier = result.CollectionRadiusMultiplier,
+			FearfulDefense = result.FearfulDefense,
 		}
 	else
 		bonusCache[player] = nil
@@ -330,7 +352,7 @@ function PetSystem.RefreshBonuses(player: Player)
 end
 
 -- Кэшированный бонус игрока — копия, чтобы потребитель не мог испортить кэш. Нет кэша
--- или значение битое — 1.0 (без бонуса), без ошибки.
+-- или значение битое — 1.0 / 0 обороны (без бонуса), без ошибки.
 function PetSystem.GetCachedBonuses(player: Player): AggregatedBonuses
 	local cached = bonusCache[player]
 	local result = neutralBonuses()
@@ -340,6 +362,9 @@ function PetSystem.GetCachedBonuses(player: Player): AggregatedBonuses
 		end
 		if validMultiplier(cached.CollectionRadiusMultiplier) then
 			result.CollectionRadiusMultiplier = cached.CollectionRadiusMultiplier
+		end
+		if validDefense(cached.FearfulDefense) then
+			result.FearfulDefense = cached.FearfulDefense
 		end
 	end
 	return result

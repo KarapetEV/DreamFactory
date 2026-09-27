@@ -19,9 +19,11 @@
 	Каркас: заглушечные значения. Реальный баланс считает economy-balancer.
 ]]
 
+local Types = require(script.Parent.Parent.Types)
 local UpgradeEffects = require(script.Parent.Parent.UpgradeEffects)
 
-export type EmotionType = "Joyful" | "Nostalgic" | "Fearful"
+-- Тот же enum, что у фрагментов снов (Types.EmotionType).
+export type EmotionType = Types.EmotionType
 
 export type SpeciesDefinition = {
 	Id: string,

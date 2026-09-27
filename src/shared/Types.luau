@@ -1,5 +1,16 @@
 --!strict
 
+-- Эмоциональный окрас (GDD раздел 3): у видов петов (PetSpeciesConfig) и у фрагментов снов.
+export type EmotionType = "Joyful" | "Nostalgic" | "Fearful"
+
+-- Буфер сырых фрагментов по эмоциям (Factory.RawFragments). Сумма по типам ≤ ёмкости склада
+-- (апгрейд StorageCapacity). Сумма и проверки — FragmentBuffer.
+export type FragmentBuffer = {
+	Joyful: number,
+	Nostalgic: number,
+	Fearful: number,
+}
+
 -- Экземпляр пета в профиле (раздел 4 ТЗ). Создаёт только PetSystem.HatchCocoon.
 export type PetRecord = {
 	Id: string, -- уникальный GUID экземпляра
@@ -25,8 +36,8 @@ export type PlayerProfile = {
 		-- Уровни апгрейдов (0..MaxLevel из UpgradeConfig). Ёмкость/скорость/радиус — не хранятся,
 		-- сервер вычисляет их из уровня и конфига (UpgradeEffects).
 		StorageCapacityLevel: number,
-		-- Буфер «сырых» фрагментов снов (наполняет CollectionSystem, разбирает FactorySystem).
-		RawFragments: number,
+		-- Буфер «сырых» фрагментов снов по эмоциям (наполняет CollectionSystem, разбирает FactorySystem).
+		RawFragments: FragmentBuffer,
 		ConveyorSpeedLevel: number,
 		Decor: { string },
 	},
@@ -69,7 +80,8 @@ export type PlayerProfile = {
 -- Только данные самого игрока. Цены и значения эффектов клиент берёт из UpgradeConfig/UpgradeEffects.
 export type EconomySnapshot = {
 	Essence: number,
-	-- Буфер сырых фрагментов (Factory.RawFragments). Ёмкость клиент считает сам из
+	-- Буфер сырых фрагментов — СУММА по эмоциям Factory.RawFragments (разбивку клиент не
+	-- получает). Ёмкость клиент считает сам из
 	-- Levels.StorageCapacity через UpgradeEffects.
 	RawFragments: number,
 	-- Текущий уровень по id апгрейда (ключи UpgradeConfig).

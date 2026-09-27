@@ -17,6 +17,10 @@
 	  в getCollectRadius владельца и проводит его через ту же collectFragment — те же проверки,
 	  общий с ручным сбором кулдаун. Клиент в этом пути не участвует; каждый игрок обрабатывается
 	  в своём pcall — битый профиль одного не останавливает тик для остальных.
+	- Эмоциональный тип фрагмента (GDD раздел 3) выбирает сервер при спавне по весам
+	  FragmentEmotionConfig.SpawnWeights (серверный Random). Тип хранится только в серверном
+	  реестре; при сборе фрагмент ложится в Factory.RawFragments[тип]. Ёмкость склада
+	  ограничивает сумму по типам (FragmentBuffer.Total); битый буфер — отказ без записи.
 ]]
 
 local Players = game:GetService("Players")
@@ -28,12 +32,16 @@ local Remotes = require(ReplicatedStorage.shared.Remotes)
 local BiomeConfig = require(ReplicatedStorage.shared.Config.BiomeConfig)
 local CollectionConfig = require(ReplicatedStorage.shared.Config.CollectionConfig)
 local AutoCollectorConfig = require(ReplicatedStorage.shared.Config.AutoCollectorConfig)
+local FragmentEmotionConfig = require(ReplicatedStorage.shared.Config.FragmentEmotionConfig)
+local PetSpeciesConfig = require(ReplicatedStorage.shared.Config.PetSpeciesConfig)
 local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
+local FragmentBuffer = require(ReplicatedStorage.shared.FragmentBuffer)
 local DataSystem = require(script.Parent.DataSystem)
 local PetSystem = require(script.Parent.PetSystem)
 local RateLimiter = require(script.Parent.Parent.Services.RateLimiter)
 
 type PlayerProfile = Types.PlayerProfile
+type EmotionType = Types.EmotionType
 
 type Fragment = {
 	Id: number,
@@ -41,6 +49,7 @@ type Fragment = {
 	Position: Vector3,
 	ZoneId: string,
 	PointIndex: number,
+	EmotionType: EmotionType, -- выбран сервером при спавне, клиенту не передаётся
 }
 
 type PlayerState = {
@@ -68,6 +77,31 @@ local occupiedPoints: { [string]: { [number]: boolean } } = {}
 local zoneCounts: { [string]: number } = {}
 local nextFragmentId = 1
 local playerStates: { [Player]: PlayerState } = {}
+local rng = Random.new()
+
+-- Тип фрагмента по весам FragmentEmotionConfig.SpawnWeights. unit — случайное число в [0, 1)
+-- (в игре — серверный Random). Чистая функция: тесты проверяют распределение на выборке.
+function CollectionSystem.RollEmotionType(unit: number): EmotionType
+	local weights = FragmentEmotionConfig.SpawnWeights
+	local total = 0
+	for _, emotion in PetSpeciesConfig.EmotionTypes do
+		total += weights[emotion]
+	end
+	local target = math.clamp(unit, 0, 1) * total
+	local last: EmotionType? = nil
+	for _, emotion in PetSpeciesConfig.EmotionTypes do
+		local weight = weights[emotion]
+		if weight > 0 then
+			last = emotion
+			if target < weight then
+				return emotion
+			end
+			target -= weight
+		end
+	end
+	-- unit = 1 или погрешность суммы: последний тип с ненулевым весом (сумма > 0 — проверено в конфиге).
+	return last :: EmotionType
+end
 
 local function getPlayerState(player: Player): PlayerState
 	local state = playerStates[player]
@@ -165,6 +199,7 @@ local function spawnFragmentInZone(zone: CollectionConfig.ZoneDefinition, folder
 		Position = position,
 		ZoneId = zone.Id,
 		PointIndex = pointIndex,
+		EmotionType = CollectionSystem.RollEmotionType(rng:NextNumber()),
 	}
 	occupied[pointIndex] = true
 	zoneCounts[zone.Id] += 1
@@ -235,12 +270,17 @@ local function collectFragment(player: Player, data: PlayerProfile, fragment: Fr
 		return "too-far"
 	end
 
-	local space = getStorageCapacity(data) - data.Factory.RawFragments
+	local buffer = data.Factory.RawFragments
+	local stored = FragmentBuffer.Total(buffer)
+	if stored == nil then
+		return "corrupt-buffer" -- о порче сообщит конвейер; фрагмент остаётся в мире
+	end
+	local space = getStorageCapacity(data) - stored
 	if space <= 0 then
 		return "storage-full" -- фрагмент остаётся в мире
 	end
 
-	data.Factory.RawFragments += math.min(CollectionConfig.FragmentValue, space)
+	buffer[fragment.EmotionType] += math.min(CollectionConfig.FragmentValue, space)
 	state.LastCollectAt = now
 	removeFragment(fragment)
 	return nil

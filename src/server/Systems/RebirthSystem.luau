@@ -14,7 +14,7 @@
 	  всех биомов с RebirthThreshold ≤ нового Count (пересчёт с нуля, не накопление, —
 	  повторный или битый множитель в профиле не «разгоняется»);
 	- CurrentBiome — открытый биом с наибольшим порогом (пороги уникальны — BiomeConfig);
-	- сброс к StartingProfileConfig: Essence, уровни фабрики и сбора; RawFragments → 0.
+	- сброс к StartingProfileConfig: Essence, уровни фабрики и сбора; RawFragments → пустой буфер.
 	  НЕ сбрасываются: Factory.Decor (исключение ТЗ), петы, монетизация (в т.ч. геймпасс
 	  авто-коллектора в Monetization.GamePassesOwned), PvP.
 
@@ -30,6 +30,7 @@ local Types = require(ReplicatedStorage.shared.Types)
 local Remotes = require(ReplicatedStorage.shared.Remotes)
 local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
 local RebirthProgress = require(ReplicatedStorage.shared.RebirthProgress)
+local FragmentBuffer = require(ReplicatedStorage.shared.FragmentBuffer)
 local BiomeConfig = require(ReplicatedStorage.shared.Config.BiomeConfig)
 local RebirthConfig = require(ReplicatedStorage.shared.Config.RebirthConfig)
 local StartingProfileConfig = require(ReplicatedStorage.shared.Config.StartingProfileConfig)
@@ -177,7 +178,7 @@ local function tryRebirth(player: Player): string?
 	factory.Level = start.FactoryLevel
 	factory.StorageCapacityLevel = start.StorageCapacityLevel
 	factory.ConveyorSpeedLevel = start.ConveyorSpeedLevel
-	factory.RawFragments = 0
+	factory.RawFragments = FragmentBuffer.Empty()
 	collection.RadiusLevel = start.CollectionRadiusLevel
 	collection.SpeedLevel = start.CollectionSpeedLevel
 	rebirth.ClarityMultiplier = progress.ClarityMultiplier

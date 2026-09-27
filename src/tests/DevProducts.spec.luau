@@ -215,7 +215,7 @@ test("профиль v4 мигрирует в v5 с пустым ProcessedReceip
 		Monetization = { GamePassesOwned = { "ExtraPetSlots" }, BattlePassTier = 0 },
 	}
 	local migrated = assert(dataSystem.MigrateProfileData(v4))
-	assert(migrated.Meta.SchemaVersion == 5 and dataSystem.CURRENT_SCHEMA_VERSION == 5)
+	assert(migrated.Meta.SchemaVersion == dataSystem.CURRENT_SCHEMA_VERSION)
 	assert(type(migrated.Monetization.ProcessedReceipts) == "table" and #migrated.Monetization.ProcessedReceipts == 0)
 	assert(migrated.Monetization.GamePassesOwned[1] == "ExtraPetSlots")
 end)

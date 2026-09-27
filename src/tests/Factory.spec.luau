@@ -15,6 +15,15 @@ local function test(name: string, run: () -> ())
 	table.insert(tests, { Name = name, Run = run })
 end
 
+-- Сумма буфера сырых фрагментов по эмоциям (Factory.RawFragments).
+local function rawTotal(data): number
+	local total = 0
+	for _, value in data.Factory.RawFragments do
+		total += value
+	end
+	return total
+end
+
 -- FactorySystem с подменёнными DataSystem (профиль в памяти) и Remotes (перехват обработчика).
 local function setup()
 	local world = Harness.NewWorld()
@@ -227,26 +236,26 @@ end)
 test("Конвейер перерабатывает фрагменты с задержкой уровня и шлёт OnEssenceProduced", function()
 	local t = setup()
 	local delay = t.Upgrades.ConveyorSpeed.BaseValue
-	t.Data.Factory.RawFragments = 3
+	t.Data.Factory.RawFragments = { Joyful = 0, Nostalgic = 3, Fearful = 0 }
 	t.Data.Rebirth.ClarityMultiplier = 2
 
 	t.World:Advance(delay * 0.75)
 	assert(t.Data.Currency.Essence == 0, "до истечения задержки ничего не произведено")
 
 	t.World:Advance(delay * 0.75)
-	assert(t.Data.Factory.RawFragments == 2, "один цикл")
+	assert(rawTotal(t.Data) == 2, "один цикл")
 	assert(t.Data.Currency.Essence == 2, "выход умножен на ClarityMultiplier")
 	assert(#t.Produced == 1 and t.Produced[1].Player == t.Player and t.Produced[1].Amount == 2, "событие (player, amount)")
 
 	t.World:Advance(delay * 3)
-	assert(t.Data.Factory.RawFragments == 0 and t.Data.Currency.Essence == 6, "буфер переработан полностью")
+	assert(rawTotal(t.Data) == 0 and t.Data.Currency.Essence == 6, "буфер переработан полностью")
 	assert(#t.Produced == 3)
 end)
 
 test("Задержка конвейера пересчитывается из уровня на каждом тике", function()
 	local t = setup()
 	local track = t.Upgrades.ConveyorSpeed
-	t.Data.Factory.RawFragments = 100
+	t.Data.Factory.RawFragments = { Joyful = 0, Nostalgic = 100, Fearful = 0 }
 
 	t.World:Advance(track.BaseValue + 0.15)
 	local before = #t.Produced
@@ -261,7 +270,7 @@ end)
 test("Конвейер: уровень выше MaxLevel не ускоряет сверх последней ступени", function()
 	local t = setup()
 	local track = t.Upgrades.ConveyorSpeed
-	t.Data.Factory.RawFragments = 1000
+	t.Data.Factory.RawFragments = { Joyful = 0, Nostalgic = 1000, Fearful = 0 }
 	t.Data.Factory.ConveyorSpeedLevel = 1e9
 
 	t.World:Advance(track.Levels[track.MaxLevel].Value * 10 + 0.05)
@@ -271,12 +280,12 @@ end)
 test("Нечисловой выход конвейера не пишется в профиль", function()
 	for _, bad in { 0 / 0, math.huge, -1 } do
 		local t = setup()
-		t.Data.Factory.RawFragments = 5
+		t.Data.Factory.RawFragments = { Joyful = 0, Nostalgic = 5, Fearful = 0 }
 		t.Data.Rebirth.ClarityMultiplier = bad
 		t.World:Advance(10)
 
 		assert(t.Data.Currency.Essence == 0, `ClarityMultiplier {bad}: Essence не тронут`)
-		assert(t.Data.Factory.RawFragments == 5, "фрагменты не потрачены")
+		assert(rawTotal(t.Data) == 5, "фрагменты не потрачены")
 		assert(#t.Produced == 0, "событие не отправлено")
 		assert(#t.World.Warnings == 1, "одно предупреждение, без спама на каждом тике")
 	end
@@ -285,20 +294,20 @@ end)
 test("S4-1: ошибка на битом профиле одного игрока не останавливает конвейер остальным", function()
 	local t = setup()
 	local delay = t.Upgrades.ConveyorSpeed.BaseValue
-	t.Data.Factory.RawFragments = 5
+	t.Data.Factory.RawFragments = { Joyful = 0, Nostalgic = 5, Fearful = 0 }
 
 	-- Битые игроки стоят в списке раньше нормального: без pcall тик падал бы до него.
 	local broken, brokenData = t.AddPlayer(1001, true)
-	brokenData.Factory.RawFragments = 5
+	brokenData.Factory.RawFragments = { Joyful = 0, Nostalgic = 5, Fearful = 0 }
 	brokenData.Rebirth = 5 :: any -- индексирование числа бросает ошибку в runConveyor
 	local brokenCurrency, brokenCurrencyData = t.AddPlayer(1002, true)
-	brokenCurrencyData.Factory.RawFragments = 5
+	brokenCurrencyData.Factory.RawFragments = { Joyful = 0, Nostalgic = 5, Fearful = 0 }
 	brokenCurrencyData.Currency = "x" :: any
 
 	t.World:Advance(delay * 4 + 0.15)
 
 	assert(t.Data.Currency.Essence > 0, "у нормального игрока Essence растёт")
-	assert(t.Data.Factory.RawFragments < 5, "нормальный игрок тратит фрагменты")
+	assert(rawTotal(t.Data) < 5, "нормальный игрок тратит фрагменты")
 	local normalEvents = 0
 	for _, event in t.Produced do
 		assert(event.Player ~= broken and event.Player ~= brokenCurrency, "битым игрокам событие не отправлено")
@@ -318,7 +327,7 @@ test("S4-1: ошибка на битом профиле одного игрок�
 		assert(count == 1, `предупреждение про {userId} ровно одно, а не {count}`)
 	end
 	assert(#t.World.Warnings == 2, `других предупреждений нет: {#t.World.Warnings}`)
-	assert(brokenData.Factory.RawFragments == 5, "битому игроку ничего не списано")
+	assert(rawTotal(brokenData) == 5, "битому игроку ничего не списано")
 end)
 
 ------------------------------------------------------------------------------------------
@@ -362,7 +371,7 @@ test("Миграция v2 → v3: StorageCapacity заменяется на Stor
 	assert(migrated.Meta.SchemaVersion == t.DataSystem.CURRENT_SCHEMA_VERSION, "доведено до текущей версии")
 	assert(migrated.Factory.StorageCapacity == nil, "готовое число удалено")
 	assert(migrated.Factory.StorageCapacityLevel == 0, "уровень склада = 0")
-	assert(migrated.Factory.RawFragments == 7 and migrated.Factory.ConveyorSpeedLevel == 2, "остальное сохранено")
+	assert(rawTotal(migrated) == 7 and migrated.Factory.ConveyorSpeedLevel == 2, "остальное сохранено")
 	assert(migrated.Currency.Essence == 50)
 end)
 
@@ -391,7 +400,7 @@ end)
 test("Снимок: первый уходит сразу после загрузки профиля — Essence и 4 уровня", function()
 	local t = setup()
 	t.Data.Currency.Essence = 42
-	t.Data.Factory.RawFragments = 0
+	t.Data.Factory.RawFragments = { Joyful = 0, Nostalgic = 0, Fearful = 0 }
 	t.Data.Collection.RadiusLevel = 2
 	t.World:Advance(0.15)
 
@@ -439,7 +448,7 @@ test("Снимок: изменение RawFragments (сбор) шлётся с �
 	t.World:Advance(0.15)
 	local before = #t.Snapshots
 
-	t.Data.Factory.RawFragments = 1 -- как после RequestCollect
+	t.Data.Factory.RawFragments = { Joyful = 0, Nostalgic = 1, Fearful = 0 } -- как после RequestCollect
 	t.World:Advance(0.1)
 	assert(#t.Snapshots == before, "в окне троттлинга не шлётся")
 

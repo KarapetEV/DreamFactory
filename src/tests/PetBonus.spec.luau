@@ -16,6 +16,15 @@ local function test(name: string, run: () -> ())
 	table.insert(tests, { Name = name, Run = run })
 end
 
+-- Сумма буфера сырых фрагментов по эмоциям (Factory.RawFragments).
+local function rawTotal(data): number
+	local total = 0
+	for _, value in data.Factory.RawFragments do
+		total += value
+	end
+	return total
+end
+
 local EPS = 1e-9
 
 local function near(a: number, b: number): boolean
@@ -282,13 +291,13 @@ test("Кэш не пересчитывается на тиках конвейе�
 	t.Equip(pet)
 
 	local spy = t.SpyAggregation()
-	t.Data.Factory.RawFragments = 100
+	t.Data.Factory.RawFragments = { Joyful = 0, Nostalgic = 100, Fearful = 0 }
 	t.World:Advance(30)
 	for id = 1, 5 do
 		t.Call("RequestCollect", id)
 	end
 	assert(spy.Calls == 0, `пересчётов на тиках: {spy.Calls}`)
-	assert(t.Data.Factory.RawFragments < 100, "конвейер при этом работал")
+	assert(rawTotal(t.Data) < 100, "конвейер при этом работал")
 end)
 
 test("Кэш строится при загрузке профиля (Init с уже вошедшим игроком)", function()
@@ -347,7 +356,7 @@ local function countCycles(t, duration: number): number
 	local connection = t.Factory.OnEssenceProduced:Connect(function()
 		cycles += 1
 	end)
-	t.Data.Factory.RawFragments = 10_000
+	t.Data.Factory.RawFragments = { Joyful = 0, Nostalgic = 10_000, Fearful = 0 }
 	t.World:Advance(duration)
 	if connection and connection.Disconnect then
 		connection:Disconnect()
@@ -432,19 +441,19 @@ test("Интеграция: Nostalgic-пет реально увеличивае
 	end
 
 	collectFrom(fragments[1])
-	assert(t.Data.Factory.RawFragments == 0, "без пета — слишком далеко")
+	assert(rawTotal(t.Data) == 0, "без пета — слишком далеко")
 
 	local pet = t.AddPet("PillowMoth", "Legendary")
 	t.Equip(pet)
 	collectFrom(fragments[1])
-	assert(t.Data.Factory.RawFragments == t.CollectionConfig.FragmentValue, "с Nostalgic-петом фрагмент собран")
+	assert(rawTotal(t.Data) == t.CollectionConfig.FragmentValue, "с Nostalgic-петом фрагмент собран")
 	assert(fragments[1].Destroyed, "фрагмент убран из мира")
 
 	-- Joyful радиус не увеличивает.
 	t.Unequip(pet)
 	t.Equip(t.AddPet("DozySheep", "Legendary"))
 	collectFrom(fragments[2])
-	assert(t.Data.Factory.RawFragments == t.CollectionConfig.FragmentValue, "Joyful не помог дотянуться")
+	assert(rawTotal(t.Data) == t.CollectionConfig.FragmentValue, "Joyful не помог дотянуться")
 end)
 
 return tests

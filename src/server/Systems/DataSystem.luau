@@ -28,6 +28,7 @@ local Types = require(ReplicatedStorage.shared.Types)
 local BiomeConfig = require(ReplicatedStorage.shared.Config.BiomeConfig)
 local StartingProfileConfig = require(ReplicatedStorage.shared.Config.StartingProfileConfig)
 local RebirthProgress = require(ReplicatedStorage.shared.RebirthProgress)
+local FragmentBuffer = require(ReplicatedStorage.shared.FragmentBuffer)
 local ProfileStoreService = require(script.Parent.Parent.Services.ProfileStoreService)
 
 type PlayerProfile = Types.PlayerProfile
@@ -37,7 +38,7 @@ local STORE_NAME = "PlayerProfiles"
 local AUTOSAVE_INTERVAL = 4 * 60
 
 -- Поднимать на 1 при любом изменении структуры PlayerProfile + добавлять миграцию ниже.
-local CURRENT_SCHEMA_VERSION = 5
+local CURRENT_SCHEMA_VERSION = 6
 
 --[[
 	MIGRATIONS[n] переводит данные со SchemaVersion n на n + 1, мутируя таблицу на месте.
@@ -54,7 +55,14 @@ local CURRENT_SCHEMA_VERSION = 5
 	3 → 4: удалено Collection.AutoCollectorOwned — единственный источник владения геймпассами
 	теперь Monetization.GamePassesOwned (перечитывается у Roblox). Поле нигде не выставлялось
 	в true (покупки авто-коллектора до этого не существовало), поэтому просто удаляем его.
-	4 → 5: добавлено Monetization.ProcessedReceipts (маркеры выданных дев-продуктов, S12) — дозаполнит reconcile() пустым списком: до S12 дев-продуктов не было.
+	4 → 5: добавлено Monetization.ProcessedReceipts (маркеры выданных дев-продуктов, S12) —
+	дозаполнит reconcile() пустым списком: до S12 дев-продуктов не было.
+	5 → 6: Factory.RawFragments — число → буфер по эмоциям { Joyful, Nostalgic, Fearful }.
+	Старое число целиком уходит в Nostalgic: его модификатор выхода 1.0, поэтому уже собранные
+	фрагменты дают столько же Essence, сколько до миграции (у живых игроков буфер почти всегда
+	пуст). Битое число (NaN, отрицательное) не трогаем — о порче сообщит конвейер, как и до
+	миграции. Ключи зашиты здесь, а не взяты из конфига: миграция не должна меняться вместе с
+	конфигом; новые эмоции дозаполнит reconcile().
 
 	Пример на будущее:
 	[1] = function(data)
@@ -76,6 +84,16 @@ local MIGRATIONS: { [number]: (data: any) -> () } = {
 		end
 	end,
 	[4] = function(_data: any) end,
+	[5] = function(data: any)
+		local factory = data.Factory
+		if type(factory) ~= "table" then
+			return
+		end
+		local old = factory.RawFragments
+		if type(old) == "number" and old == old and old >= 0 and old ~= math.huge then
+			factory.RawFragments = { Joyful = 0, Nostalgic = old, Fearful = 0 }
+		end
+	end,
 }
 
 for version = 0, CURRENT_SCHEMA_VERSION - 1 do
@@ -131,7 +149,7 @@ function DataSystem.BuildDefaultProfile(): PlayerProfile
 		Factory = {
 			Level = start.FactoryLevel,
 			StorageCapacityLevel = start.StorageCapacityLevel,
-			RawFragments = 0,
+			RawFragments = FragmentBuffer.Empty(),
 			ConveyorSpeedLevel = start.ConveyorSpeedLevel,
 			Decor = {},
 		},

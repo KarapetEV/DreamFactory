@@ -16,6 +16,15 @@ local function test(name: string, run: () -> ())
 	table.insert(tests, { Name = name, Run = run })
 end
 
+-- Сумма буфера сырых фрагментов по эмоциям (Factory.RawFragments).
+local function rawTotal(data): number
+	local total = 0
+	for _, value in data.Factory.RawFragments do
+		total += value
+	end
+	return total
+end
+
 -- RebirthSystem + FactorySystem в одном «сервере»: общий подменённый DataSystem
 -- (профили в памяти), перехват обработчиков и EconomySnapshot.FireClient.
 local function setup()
@@ -100,7 +109,7 @@ local function setup()
 			data.Factory.Level = 7
 			data.Factory.StorageCapacityLevel = 3
 			data.Factory.ConveyorSpeedLevel = 4
-			data.Factory.RawFragments = 55
+			data.Factory.RawFragments = { Joyful = 0, Nostalgic = 55, Fearful = 0 }
 			data.Factory.Decor = { "Lantern", "Clock" }
 			data.Collection.RadiusLevel = 2
 			data.Collection.SpeedLevel = 5
@@ -199,7 +208,7 @@ test("Успешный rebirth: сброс к StartingProfileConfig, Decor и г
 	assert(d.Factory.Level == s.FactoryLevel)
 	assert(d.Factory.StorageCapacityLevel == s.StorageCapacityLevel)
 	assert(d.Factory.ConveyorSpeedLevel == s.ConveyorSpeedLevel)
-	assert(d.Factory.RawFragments == 0, "буфер сырых фрагментов обнулён")
+	assert(rawTotal(d) == 0, "буфер сырых фрагментов обнулён")
 	assert(d.Collection.RadiusLevel == s.CollectionRadiusLevel)
 	assert(d.Collection.SpeedLevel == s.CollectionSpeedLevel)
 
@@ -463,7 +472,7 @@ test("Интеграция: после rebirth конвейер использу
 	t.Factory.OnEssenceProduced:Connect(function(_p, amount)
 		table.insert(produced, amount)
 	end)
-	t.Data.Factory.RawFragments = 1
+	t.Data.Factory.RawFragments = { Joyful = 0, Nostalgic = 1, Fearful = 0 }
 	t.World:Advance(10)
 
 	local essencePerFragment = t.World:LoadModule("src/shared/Config/FactoryConfig").EssencePerFragment

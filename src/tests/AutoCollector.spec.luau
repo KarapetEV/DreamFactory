@@ -17,6 +17,15 @@ local function test(name: string, run: () -> ())
 	table.insert(tests, { Name = name, Run = run })
 end
 
+-- Сумма буфера сырых фрагментов по эмоциям (Factory.RawFragments).
+local function rawTotal(data): number
+	local total = 0
+	for _, value in data.Factory.RawFragments do
+		total += value
+	end
+	return total
+end
+
 -- PetSystem + CollectionSystem в одном «сервере»: подменённый DataSystem (профили в памяти),
 -- перехват обработчиков ремоут. Игроки — через AddPlayer; CollectionSystem.Init вызывает тест.
 local function setup()
@@ -199,7 +208,7 @@ test("Без геймпасса пассивного сбора нет", functio
 	placeAbove(player, fragment, 0)
 
 	t.Tick(5)
-	assert(data.Factory.RawFragments == 0, "ничего не собрано")
+	assert(rawTotal(data) == 0, "ничего не собрано")
 	assert(not fragment.Destroyed, "фрагмент на месте")
 end)
 
@@ -219,7 +228,7 @@ test("С геймпассом фрагмент в радиусе собирае�
 
 	t.Tick()
 	assert(not fired, "клиентский путь не участвовал")
-	assert(data.Factory.RawFragments == t.CollectionConfig.FragmentValue, `собрано {data.Factory.RawFragments}`)
+	assert(rawTotal(data) == t.CollectionConfig.FragmentValue, `собрано {rawTotal(data)}`)
 	assert(fragment.Destroyed, "фрагмент убран из мира")
 end)
 
@@ -229,14 +238,14 @@ test("За тик собирается не больше одного фрагм
 	data.Collection.RadiusLevel = 5 -- радиус 22: дотягивается до нескольких точек спавна
 	t.Collection.Init()
 	t.World:Advance(t.CollectionConfig.SpawnInterval * 3) -- до тика: докинуть фрагментов в зону
-	data.Factory.RawFragments = 0
+	data.Factory.RawFragments = { Joyful = 0, Nostalgic = 0, Fearful = 0 }
 	local fragments = liveFragments(t)
 	assert(#fragments >= 2, `фрагментов {#fragments}`)
 	local target = fragments[1]
 	placeAbove(player, target, 1)
 
 	t.Tick()
-	assert(data.Factory.RawFragments == t.CollectionConfig.FragmentValue, `за тик собрано {data.Factory.RawFragments}`)
+	assert(rawTotal(data) == t.CollectionConfig.FragmentValue, `за тик собрано {rawTotal(data)}`)
 	assert(target.Destroyed, "собран ближайший")
 end)
 
@@ -249,7 +258,7 @@ test("Фрагмент за пределами радиуса не собира�
 	placeAbove(player, fragment, radius + t.CollectionConfig.DistanceTolerance + 1)
 
 	t.Tick(5)
-	assert(data.Factory.RawFragments == 0, "далеко — не собрано")
+	assert(rawTotal(data) == 0, "далеко — не собрано")
 	assert(not fragment.Destroyed)
 end)
 
@@ -264,11 +273,11 @@ test("Радиус пассивного сбора растёт от апгре�
 	placeAbove(player, fragment, (base + upgraded) / 2)
 
 	t.Tick(3)
-	assert(data.Factory.RawFragments == 0, "на уровне 0 не дотягивается")
+	assert(rawTotal(data) == 0, "на уровне 0 не дотягивается")
 
 	data.Collection.RadiusLevel = 1
 	t.Tick()
-	assert(data.Factory.RawFragments == t.CollectionConfig.FragmentValue, "после апгрейда собран")
+	assert(rawTotal(data) == t.CollectionConfig.FragmentValue, "после апгрейда собран")
 	assert(fragment.Destroyed)
 end)
 
@@ -282,13 +291,13 @@ test("Радиус пассивного сбора растёт от Nostalgic-�
 	placeAbove(player, fragment, base * (1 + multiplier) / 2)
 
 	t.Tick(3)
-	assert(data.Factory.RawFragments == 0, "без пета не дотягивается")
+	assert(rawTotal(data) == 0, "без пета не дотягивается")
 
 	local pet = { Id = "pet-1", SpeciesId = "PillowMoth", Rarity = "Legendary", Level = 1, Equipped = false }
 	table.insert(data.Pets, pet)
 	t.Handlers.EquipPet(player, pet.Id)
 	t.Tick()
-	assert(data.Factory.RawFragments == t.CollectionConfig.FragmentValue, "с Nostalgic-петом собран")
+	assert(rawTotal(data) == t.CollectionConfig.FragmentValue, "с Nostalgic-петом собран")
 	assert(fragment.Destroyed)
 end)
 
@@ -310,8 +319,8 @@ test("Гонка: ручной сбор забрал фрагмент — тик
 	t.Handlers.RequestCollect(other, fragment:GetAttribute("FragmentId"))
 	t.World:Advance(0.01) -- ровно один тик (следующий совпал бы с респавном в той же точке)
 
-	assert(otherData.Factory.RawFragments == t.CollectionConfig.FragmentValue, "забрал ручной сбор")
-	assert(ownerData.Factory.RawFragments == 0, "тик не засчитал уже собранный фрагмент")
+	assert(rawTotal(otherData) == t.CollectionConfig.FragmentValue, "забрал ручной сбор")
+	assert(rawTotal(ownerData) == 0, "тик не засчитал уже собранный фрагмент")
 end)
 
 test("Гонка: тик забрал фрагмент — ручной RequestCollect того же id отклоняется", function()
@@ -323,10 +332,10 @@ test("Гонка: тик забрал фрагмент — ручной RequestC
 	placeAbove(owner, fragment, 1)
 
 	t.Tick()
-	assert(ownerData.Factory.RawFragments == t.CollectionConfig.FragmentValue, "тик собрал")
+	assert(rawTotal(ownerData) == t.CollectionConfig.FragmentValue, "тик собрал")
 	t.World:Advance(1) -- кулдаун истёк: отказ только из-за того, что фрагмента уже нет
 	t.Handlers.RequestCollect(owner, id)
-	assert(ownerData.Factory.RawFragments == t.CollectionConfig.FragmentValue, "второй раз не засчитан")
+	assert(rawTotal(ownerData) == t.CollectionConfig.FragmentValue, "второй раз не засчитан")
 end)
 
 test("Кулдаун общий: сразу после ручного сбора тик не собирает", function()
@@ -344,10 +353,10 @@ test("Кулдаун общий: сразу после ручного сбора
 	local nextTick = (math.floor(t.World.Now / interval) + 1) * interval
 	t.World:Advance(nextTick - t.World.Now - 0.001)
 	t.Handlers.RequestCollect(owner, fragments[1]:GetAttribute("FragmentId"))
-	assert(data.Factory.RawFragments == t.CollectionConfig.FragmentValue, "ручной сбор прошёл")
+	assert(rawTotal(data) == t.CollectionConfig.FragmentValue, "ручной сбор прошёл")
 
 	t.World:Advance(0.01) -- тик внутри кулдауна ручного сбора
-	assert(data.Factory.RawFragments == t.CollectionConfig.FragmentValue, "тик упёрся в общий кулдаун")
+	assert(rawTotal(data) == t.CollectionConfig.FragmentValue, "тик упёрся в общий кулдаун")
 end)
 
 ------------------------------------------------------------------------------------------
@@ -372,9 +381,9 @@ test("Битый профиль/Monetization одного игрока не ва
 	placeAbove(healthy, fragment, 1)
 
 	t.Tick()
-	assert(d4.Factory.RawFragments == t.CollectionConfig.FragmentValue, "здоровый игрок собрал")
+	assert(rawTotal(d4) == t.CollectionConfig.FragmentValue, "здоровый игрок собрал")
 	assert(fragment.Destroyed)
-	assert(d1.Factory.RawFragments == 0 and d2.Factory.RawFragments == 0, "битая монетизация = нет геймпасса")
+	assert(rawTotal(d1) == 0 and rawTotal(d2) == 0, "битая монетизация = нет геймпасса")
 
 	t.Tick(2) -- ещё тики: цикл жив, лог не спамится
 

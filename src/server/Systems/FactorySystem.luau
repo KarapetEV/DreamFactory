@@ -7,12 +7,16 @@
 	Конвейер:
 	- серверный тик раз в FactoryConfig.TickInterval; у каждого игрока за цикл
 	  FragmentsPerCycle сырых фрагментов (Factory.RawFragments) превращаются в Essence;
+	  буфер разбит по эмоциям: цикл берёт фрагменты по типам в порядке
+	  PetSpeciesConfig.EmotionTypes, выход каждого типа умножается на свой
+	  FragmentEmotionConfig.EssenceModifiers;
 	- задержка цикла на каждом тике заново вычисляется из Factory.ConveyorSpeedLevel
 	  и UpgradeConfig (не кэшируется) — апгрейд действует со следующего тика; поверх неё —
 	  бонус надетых Joyful-петов: задержка делится на ConveyorSpeedMultiplier из кэша
 	  PetSystem (сам бонус на тике не пересчитывается);
 	- выход умножается на Rebirth.ClarityMultiplier (раздел 5.4) и перед записью
-	  проверяется на конечность; после записи — событие OnEssenceProduced(player, amount).
+	  проверяется на конечность (все типы цикла — до любой записи); после записи — по событию
+	  OnEssenceProduced(player, amount, emotionType) на каждый реально переработанный тип.
 
 	PurchaseUpgrade(upgradeId, targetLevel):
 	- клиент присылает только намерение: id апгрейда и уровень, который хочет купить;
@@ -43,12 +47,18 @@ local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
 local UpgradeConfig = require(ReplicatedStorage.shared.Config.UpgradeConfig)
 local FactoryConfig = require(ReplicatedStorage.shared.Config.FactoryConfig)
 local PetSpeciesConfig = require(ReplicatedStorage.shared.Config.PetSpeciesConfig)
+local FragmentEmotionConfig = require(ReplicatedStorage.shared.Config.FragmentEmotionConfig)
+local FragmentBuffer = require(ReplicatedStorage.shared.FragmentBuffer)
 local DataSystem = require(script.Parent.DataSystem)
 local PetSystem = require(script.Parent.PetSystem)
 local RateLimiter = require(script.Parent.Parent.Services.RateLimiter)
 
 type PlayerProfile = Types.PlayerProfile
 type UpgradeEffectType = UpgradeConfig.UpgradeEffectType
+type EmotionType = Types.EmotionType
+
+-- Переработка одного типа за цикл: сколько фрагментов взято и сколько Essence это дало.
+type CycleOutput = { EmotionType: EmotionType, Taken: number, Amount: number }
 
 type PlayerState = {
 	RequestTimes: { number }, -- метки времени вызовов PurchaseUpgrade в текущем окне rate limit
@@ -90,8 +100,9 @@ assert(
 
 local FactorySystem = {}
 
--- (player: Player, amount: number) — после каждого начисления Essence конвейером.
--- Подписчик — будущий ChaosBossSystem (раздел 5.5).
+-- (player: Player, amount: number, emotionType: EmotionType) — после начисления Essence
+-- конвейером, по событию на каждый тип, переработанный в цикле (amount — выход этого типа,
+-- уже с модификатором). Подписчик — будущий ChaosBossSystem (раздел 5.5).
 FactorySystem.OnEssenceProduced = Signal.new()
 
 local playerStates: { [Player]: PlayerState } = {}
@@ -257,7 +268,8 @@ local function buildSnapshot(data: PlayerProfile, purchaseAck: string?, rebirthA
 	end
 	return {
 		Essence = data.Currency.Essence,
-		RawFragments = data.Factory.RawFragments,
+		-- Клиенту — только сумма по типам (HUD без изменений); битый буфер — 0.
+		RawFragments = FragmentBuffer.Total(data.Factory.RawFragments) or 0,
 		Levels = levels,
 		PurchaseAck = purchaseAck,
 		RebirthCount = if type(rebirth.Count) == "number" then rebirth.Count else 0,
@@ -393,9 +405,10 @@ local function runConveyor(player: Player, data: PlayerProfile, now: number)
 	local state = getPlayerState(player)
 	local factory = data.Factory
 
-	local raw = factory.RawFragments
-	if not isFinite(raw) or raw < 0 then
-		reportCorruption(player, `RawFragments = {raw}`)
+	local buffer = factory.RawFragments
+	local raw = FragmentBuffer.Total(buffer)
+	if raw == nil then
+		reportCorruption(player, `RawFragments повреждён ({typeof(buffer)})`)
 		return
 	end
 	if raw == 0 then
@@ -413,23 +426,46 @@ local function runConveyor(player: Player, data: PlayerProfile, now: number)
 		return
 	end
 
-	local batch = math.min(raw, FactoryConfig.FragmentsPerCycle)
-	local amount = batch * FactoryConfig.EssencePerFragment * data.Rebirth.ClarityMultiplier
-	local newEssence = data.Currency.Essence + amount
-	if not isFinite(amount) or amount <= 0 or not isFinite(newEssence) then
-		reportCorruption(
-			player,
-			`выход конвейера {amount} (ClarityMultiplier = {data.Rebirth.ClarityMultiplier}, Essence = {data.Currency.Essence})`
-		)
+	-- Сначала считаем выход всех типов цикла, пишем — только если всё конечно.
+	local perFragment = FactoryConfig.EssencePerFragment * data.Rebirth.ClarityMultiplier
+	local remaining = math.min(raw, FactoryConfig.FragmentsPerCycle)
+	local outputs: { CycleOutput } = {}
+	local total = 0
+	for _, emotion in PetSpeciesConfig.EmotionTypes do
+		if remaining <= 0 then
+			break
+		end
+		local taken = math.min((buffer :: any)[emotion], remaining)
+		if taken > 0 then
+			local amount = taken * perFragment * FragmentEmotionConfig.EssenceModifiers[emotion]
+			if not isFinite(amount) or amount <= 0 then
+				reportCorruption(
+					player,
+					`выход конвейера {amount} для {emotion} (ClarityMultiplier = {data.Rebirth.ClarityMultiplier})`
+				)
+				return
+			end
+			table.insert(outputs, { EmotionType = emotion, Taken = taken, Amount = amount })
+			total += amount
+			remaining -= taken
+		end
+	end
+	local newEssence = data.Currency.Essence + total
+	if not isFinite(newEssence) then
+		reportCorruption(player, `Essence = {data.Currency.Essence} после выхода {total}`)
 		return
 	end
 
-	factory.RawFragments = raw - batch
+	for _, output in outputs do
+		(buffer :: any)[output.EmotionType] -= output.Taken
+	end
 	data.Currency.Essence = newEssence
 	-- Сдвиг расписания на delay, а не на now: иначе каждый цикл округлялся бы вверх до шага тика.
 	-- Отставание больше чем на цикл (лаг сервера) не копим — «догонять» пачкой не даём.
 	state.LastCycleAt = if now - state.LastCycleAt >= 2 * delay then now else state.LastCycleAt + delay
-	FactorySystem.OnEssenceProduced:Fire(player, amount)
+	for _, output in outputs do
+		FactorySystem.OnEssenceProduced:Fire(player, output.Amount, output.EmotionType)
+	end
 end
 
 -- Каждый игрок — под своим pcall: ошибка на битом профиле (например, Rebirth или Factory

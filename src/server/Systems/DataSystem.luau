@@ -37,7 +37,7 @@ local STORE_NAME = "PlayerProfiles"
 local AUTOSAVE_INTERVAL = 4 * 60
 
 -- Поднимать на 1 при любом изменении структуры PlayerProfile + добавлять миграцию ниже.
-local CURRENT_SCHEMA_VERSION = 4
+local CURRENT_SCHEMA_VERSION = 5
 
 --[[
 	MIGRATIONS[n] переводит данные со SchemaVersion n на n + 1, мутируя таблицу на месте.
@@ -54,6 +54,7 @@ local CURRENT_SCHEMA_VERSION = 4
 	3 → 4: удалено Collection.AutoCollectorOwned — единственный источник владения геймпассами
 	теперь Monetization.GamePassesOwned (перечитывается у Roblox). Поле нигде не выставлялось
 	в true (покупки авто-коллектора до этого не существовало), поэтому просто удаляем его.
+	4 → 5: добавлено Monetization.ProcessedReceipts (маркеры выданных дев-продуктов, S12) — дозаполнит reconcile() пустым списком: до S12 дев-продуктов не было.
 
 	Пример на будущее:
 	[1] = function(data)
@@ -74,6 +75,7 @@ local MIGRATIONS: { [number]: (data: any) -> () } = {
 			data.Collection.AutoCollectorOwned = nil
 		end
 	end,
+	[4] = function(_data: any) end,
 }
 
 for version = 0, CURRENT_SCHEMA_VERSION - 1 do
@@ -153,6 +155,7 @@ function DataSystem.BuildDefaultProfile(): PlayerProfile
 		},
 		Monetization = {
 			GamePassesOwned = {},
+			ProcessedReceipts = {},
 			BattlePassSeasonId = nil,
 			BattlePassTier = start.BattlePassTier,
 		},
@@ -261,6 +264,16 @@ function DataSystem.WaitForData(player: Player, timeout: number?): PlayerProfile
 		task.wait(0.1)
 	end
 	return DataSystem.GetData(player)
+end
+
+-- Внеочередная запись профиля в DataStore (с продлением лока). true — записано. Для операций,
+-- которые обязаны стать durable до ответа внешней стороне (ProcessReceipt). Yield'ит.
+function DataSystem.SaveNow(player: Player): boolean
+	local profile = readyProfiles[player]
+	if profile == nil or not profile.Active then
+		return false
+	end
+	return ProfileStoreService.SaveProfile(player)
 end
 
 local function startAutosave(player: Player, profile: Profile)

@@ -102,6 +102,9 @@ function Harness.NewWorld()
 	self.Records = {} :: { [string]: any }
 	-- Задержки (виртуальные секунды) для следующих вызовов UpdateAsync, по одной на вызов.
 	self.StoreDelays = {} :: { number }
+	-- Сбой запроса к DataStore: функция теста получает ("GetAsync" | "UpdateAsync", key) и
+	-- возвращает текст ошибки (запрос бросает её) или nil (запрос проходит). nil — сбоев нет.
+	self.StoreError = nil :: ((op: string, key: string) -> string?)?
 	self.Warnings = {} :: { string }
 	-- Режим Studio (RunService:IsStudio) и ошибка, которую бросает DataStoreService:GetDataStore
 	-- (nil — не бросает): воспроизводят Studio с неопубликованным плейсом.
@@ -152,12 +155,26 @@ function Harness.NewWorld()
 		end,
 	}
 
+	local function maybeFail(op: string, key: string)
+		local storeError = world.StoreError
+		local message = if storeError then storeError(op, key) else nil
+		if message then
+			error(message, 0)
+		end
+	end
+
 	self.Store = {
+		-- Всегда «без кэша»: options (DataStoreGetOptions) игнорируются.
+		GetAsync = function(_store: any, key: string, _options: any?): any
+			maybeFail("GetAsync", key)
+			return deepCopy(world.Records[key])
+		end,
 		UpdateAsync = function(_store: any, key: string, transform: (any, any) -> (any, any)): any
 			local delay = table.remove(world.StoreDelays, 1)
 			if delay and delay > 0 then
 				world.Task.wait(delay)
 			end
+			maybeFail("UpdateAsync", key)
 			local newValue = transform(deepCopy(world.Records[key]), nil)
 			if newValue ~= nil then
 				world.Records[key] = deepCopy(newValue)
@@ -264,6 +281,14 @@ function World:_makeEnv(moduleCache: { [string]: any }, scriptPath: string?): { 
 			GetPlayers = function()
 				return table.clone(world.Players)
 			end,
+			GetPlayerByUserId = function(_self: any, userId: number)
+				for _, player in world.Players do
+					if player.UserId == userId then
+						return player
+					end
+				end
+				return nil
+			end,
 		},
 	}
 	for serviceName, roots in ROJO_ROOTS do
@@ -303,6 +328,7 @@ function World:_makeEnv(moduleCache: { [string]: any }, scriptPath: string?): { 
 	}
 	env.Enum = {
 		DataStoreRequestType = { UpdateAsync = "UpdateAsync" },
+		ProductPurchaseDecision = { PurchaseGranted = "PurchaseGranted", NotProcessedYet = "NotProcessedYet" },
 		PartType = { Ball = "Ball" },
 		Material = { Neon = "Neon" },
 	}

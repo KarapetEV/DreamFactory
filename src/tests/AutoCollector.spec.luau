@@ -181,7 +181,7 @@ test("Новый профиль без Collection.AutoCollectorOwned; мигра
 		Monetization = { GamePassesOwned = { "ExtraPetSlots" }, BattlePassTier = 0 },
 	}
 	local migrated = assert(t.DataSystem.MigrateProfileData(v3), "миграция прошла")
-	assert(migrated.Meta.SchemaVersion == 4 and t.DataSystem.CURRENT_SCHEMA_VERSION == 4)
+	assert(migrated.Meta.SchemaVersion == t.DataSystem.CURRENT_SCHEMA_VERSION, "доведено до текущей версии")
 	assert(migrated.Collection.AutoCollectorOwned == nil, "старое поле удалено")
 	assert(migrated.Collection.RadiusLevel == 2 and migrated.Collection.SpeedLevel == 1, "уровни сохранены")
 	assert(migrated.Monetization.GamePassesOwned[1] == "ExtraPetSlots", "владение не тронуто")

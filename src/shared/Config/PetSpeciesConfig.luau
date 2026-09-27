@@ -35,6 +35,8 @@ export type PetSpeciesDefinition = {
 	EmotionTypes: { EmotionType },
 	-- Шкала редкостей от младшей к старшей; бонус вида по ней строго возрастает.
 	Rarities: { string },
+	-- Название редкости для UI и публикуемого текста шансов (OddsText). Ключи — все Rarities.
+	RarityDisplayNames: { [string]: string },
 	MutationBonusFraction: number,
 	-- Потолок каждого агрегированного множителя (защита от раздутого стака бонусов).
 	MaxMultiplier: number,
@@ -52,6 +54,13 @@ local STANDARD_SCALE = {
 local PetSpeciesConfig: PetSpeciesDefinition = {
 	EmotionTypes = { "Joyful", "Nostalgic", "Fearful" },
 	Rarities = { "Common", "Rare", "Epic", "Legendary", "Secret" },
+	RarityDisplayNames = {
+		Common = "Обычный",
+		Rare = "Редкий",
+		Epic = "Эпический",
+		Legendary = "Легендарный",
+		Secret = "Секретный",
+	},
 	MutationBonusFraction = 0.1,
 	MaxMultiplier = 3,
 	Species = {
@@ -115,6 +124,14 @@ do
 		assert(type(rarity) == "string" and rarity ~= "", "PetSpeciesConfig: пустая редкость")
 		assert(not seen[rarity], `PetSpeciesConfig: редкость {rarity} повторяется`)
 		seen[rarity] = true
+		local displayName = PetSpeciesConfig.RarityDisplayNames[rarity]
+		assert(
+			type(displayName) == "string" and displayName ~= "",
+			`PetSpeciesConfig: у редкости {rarity} нет RarityDisplayNames`
+		)
+	end
+	for rarity in PetSpeciesConfig.RarityDisplayNames do
+		assert(seen[rarity], `PetSpeciesConfig: RarityDisplayNames.{rarity} — нет такой редкости в Rarities`)
 	end
 end
 

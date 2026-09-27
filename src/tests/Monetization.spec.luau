@@ -181,7 +181,7 @@ test("GamePassId = 0 (заглушка): Roblox не опрашивается, �
 			placeholders += 1
 		end
 	end
-	assert(warningsAbout(t, "заглушка") == placeholders)
+	assert(warningsAbout(t, "GamePassId = 0 (заглушка)") == placeholders)
 	assert(warningsAbout(t, `{PASS_ID} GamePassId = 0`) == 1, "про слоты петов — ровно один")
 end)
 

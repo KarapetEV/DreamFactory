@@ -10,6 +10,12 @@ export type PetRecord = {
 	Equipped: boolean,
 }
 
+-- Маркер выдачи дев-продукта в профиле. Closed = квитанция уже закрыта в логе PurchaseLog.
+export type ReceiptMarker = {
+	Id: string, -- PurchaseId квитанции Roblox
+	Closed: boolean,
+}
+
 export type PlayerProfile = {
 	Currency: {
 		Essence: number,
@@ -45,6 +51,10 @@ export type PlayerProfile = {
 	},
 	Monetization: {
 		GamePassesOwned: { string },
+		-- Маркеры выданных дев-продуктов (MonetizationSystem.ProcessReceipt): «выдача уже в
+		-- профиле», пишутся одной записью с самой выдачей. Закрытых сверх
+		-- DevProductConfig.ProfileReceiptHistory вытесняются старейшие; незакрытые — никогда.
+		ProcessedReceipts: { ReceiptMarker },
 		BattlePassSeasonId: string?,
 		BattlePassTier: number,
 	},

@@ -43,6 +43,11 @@ export type ChaosBossDefinition = {
 	MaxRequestsPerWindow: number,
 	-- Сколько отклонённых запросов в окне считается подозрительной активностью (пишется в лог).
 	SuspiciousRejectThreshold: number,
+	-- Рассылка ChaosSnapshot: изменения шкалы/HP/вклада — не чаще SnapshotInterval секунд
+	-- (старт и конец ивента — сразу); новому игроку — снимок при входе и один повтор через
+	-- InitialSnapshotResendDelay (клиент мог не успеть подписаться).
+	SnapshotInterval: number,
+	InitialSnapshotResendDelay: number,
 	-- Награда
 	RewardEssencePerDamage: number,
 	VictoryRewardMultiplier: number,
@@ -65,6 +70,8 @@ local ChaosBossConfig: ChaosBossDefinition = {
 	RequestWindow = 1,
 	MaxRequestsPerWindow = 10,
 	SuspiciousRejectThreshold = 30,
+	SnapshotInterval = 0.5,
+	InitialSnapshotResendDelay = 2,
 
 	RewardEssencePerDamage = 1,
 	VictoryRewardMultiplier = 1.5,
@@ -105,6 +112,8 @@ do
 		"ChaosBossConfig: некорректный MaxRequestsPerWindow"
 	)
 	positive("SuspiciousRejectThreshold", c.SuspiciousRejectThreshold)
+	positive("SnapshotInterval", c.SnapshotInterval)
+	positive("InitialSnapshotResendDelay", c.InitialSnapshotResendDelay)
 	nonNegative("RewardEssencePerDamage", c.RewardEssencePerDamage)
 	assert(
 		isFinite(c.VictoryRewardMultiplier) and c.VictoryRewardMultiplier >= 1,

@@ -113,4 +113,27 @@ export type PetSnapshot = {
 	HatchedPetId: string?,
 }
 
+-- Итог ивента Хаос-босса для конкретного игрока (поле ChaosSnapshot.Ended).
+export type ChaosEventResult = {
+	EventId: number,
+	Outcome: "Victory" | "Timeout",
+	Damage: number, -- вклад игрока в завершённом ивенте (0 — не участвовал)
+	Reward: number, -- выданная Essence (0 — не участвовал)
+}
+
+-- Состояние Хаоса, которое сервер шлёт каждому игроку через Remotes.ChaosSnapshot
+-- (раздел 5.5/5.8). Всё, кроме Contribution/Ended, общее для сервера; Contribution и
+-- Ended — только самого получателя.
+export type ChaosSnapshot = {
+	ChaosLevel: number,
+	ActivationThreshold: number,
+	Active: boolean,
+	BossHealth: number,
+	BossMaxHealth: number,
+	EventId: number, -- номер текущего/последнего ивента (0 — ещё не было)
+	Contribution: number, -- урон получателя в текущем ивенте
+	-- Только в снимке завершения ивента: итог для получателя.
+	Ended: ChaosEventResult?,
+}
+
 return {}

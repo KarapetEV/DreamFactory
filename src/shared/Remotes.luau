@@ -59,6 +59,8 @@ export type RemoteRegistry = {
 	PerformRebirth: RemoteEvent,
 	-- ChaosBossSystem (раздел 5.5)
 	RequestAttackBoss: RemoteEvent,
+	-- Сервер → клиент: состояние Хаоса и личный вклад (Types.ChaosSnapshot), шлёт ChaosBossSystem.
+	ChaosSnapshot: RemoteEvent,
 	-- PvPRaidSystem (раздел 5.6)
 	RequestRaidStart: RemoteEvent,
 }
@@ -73,6 +75,7 @@ local Remotes: RemoteRegistry = {
 	PetSnapshot = getRemoteEvent(folder, "PetSnapshot"),
 	PerformRebirth = getRemoteEvent(folder, "PerformRebirth"),
 	RequestAttackBoss = getRemoteEvent(folder, "RequestAttackBoss"),
+	ChaosSnapshot = getRemoteEvent(folder, "ChaosSnapshot"),
 	RequestRaidStart = getRemoteEvent(folder, "RequestRaidStart"),
 }
 

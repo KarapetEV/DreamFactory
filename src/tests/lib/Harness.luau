@@ -117,6 +117,10 @@ function Harness.NewWorld()
 	self.PurchaseFinishedHandlers = {} :: { (...any) -> () }
 	-- Что возвращает Players:GetPlayers() внутри мира.
 	self.Players = {} :: { any }
+	-- Подписчики Players.PlayerAdded/PlayerRemoving: события сами не срабатывают, тест
+	-- вызывает их через world:FirePlayerAdded/FirePlayerRemoving.
+	self.PlayerAddedHandlers = {} :: { (any) -> () }
+	self.PlayerRemovingHandlers = {} :: { (any) -> () }
 	-- Источник чисел в [0, 1) для застабленного Random (Random.new():NextNumber()).
 	-- Тест может подменить, чтобы задать исход ролла.
 	self.NextRandom = function(): number
@@ -227,10 +231,21 @@ function World:NewPlayer(userId: number?): Player
 	return { UserId = userId or 42, Name = "TestPlayer", Parent = true }
 end
 
+-- Вызвать подписчиков Players.PlayerAdded / PlayerRemoving (каждый — в своей корутине, как в игре).
+function World:FirePlayerAdded(player: any)
+	for _, fn in table.clone(self.PlayerAddedHandlers) do
+		self.Task.spawn(fn, player)
+	end
+end
+
+function World:FirePlayerRemoving(player: any)
+	for _, fn in table.clone(self.PlayerRemovingHandlers) do
+		self.Task.spawn(fn, player)
+	end
+end
+
 function World:_makeEnv(moduleCache: { [string]: any }, scriptPath: string?): { [string]: any }
 	local world = self
-	local signal = { Connect = function() end }
-
 	local services = {
 		HttpService = {
 			GenerateGUID = function(_self: any, _wrap: boolean?): string
@@ -276,8 +291,16 @@ function World:_makeEnv(moduleCache: { [string]: any }, scriptPath: string?): { 
 			},
 		},
 		Players = {
-			PlayerAdded = signal,
-			PlayerRemoving = signal,
+			PlayerAdded = {
+				Connect = function(_self: any, fn: (any) -> ())
+					table.insert(world.PlayerAddedHandlers, fn)
+				end,
+			},
+			PlayerRemoving = {
+				Connect = function(_self: any, fn: (any) -> ())
+					table.insert(world.PlayerRemovingHandlers, fn)
+				end,
+			},
 			GetPlayers = function()
 				return table.clone(world.Players)
 			end,

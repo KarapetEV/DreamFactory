@@ -28,12 +28,23 @@
 	- награду получают только те, кто на сервере в момент завершения. Начисление вышедшим
 	  при следующем входе (опция ТЗ) сознательно не реализовано;
 	- таймер таймаута привязан к номеру ивента: устаревший таймер не завершает следующий ивент.
+
+	Рассылка клиентам (Remotes.ChaosSnapshot, только сервер → клиент):
+	- каждому игроку отдельным FireClient: общее состояние (шкала, HP, номер ивента) + его
+	  личный Contribution; в снимке завершения — ещё Ended (исход, его урон и награда, 0 —
+	  если не участвовал);
+	- старт и конец ивента — сразу; изменения шкалы/HP/вклада — не чаще SnapshotInterval:
+	  первое изменение после паузы уходит сразу, следующие внутри интервала сливаются в одну
+	  отложенную отправку актуального состояния (последнее HP не теряется);
+	- вошедшему игроку (в т.ч. реджойн посреди боя — вклад по UserId) — снимок сразу при
+	  входе и один повтор через InitialSnapshotResendDelay, собранный заново.
 ]]
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
+local Types = require(ReplicatedStorage.shared.Types)
 local Remotes = require(ReplicatedStorage.shared.Remotes)
 local Signal = require(ReplicatedStorage.shared.Signal)
 local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
@@ -85,6 +96,13 @@ local bossPart: Part? = nil
 -- UserId -> урон, засчитанный в текущем ивенте.
 local contributions: { [number]: number } = {}
 local playerStates: { [Player]: PlayerState } = {}
+-- Throttle рассылки: момент последней общей рассылки, есть ли неотправленные изменения и
+-- запланирована ли отложенная отправка.
+local lastBroadcastAt = -math.huge
+local broadcastDirty = false
+local broadcastScheduled = false
+-- Игроки, чей FireServer на односторонний ChaosSnapshot уже записан в лог. Ключи слабые.
+local reportedForeignFires: { [Player]: true } = setmetatable({}, { __mode = "k" }) :: any
 
 local function getPlayerState(player: Player): PlayerState
 	local state = playerStates[player]
@@ -144,6 +162,66 @@ local function createBossPart(): Part
 	part:SetAttribute("Health", ChaosBossConfig.BossMaxHealth)
 	part.Parent = Workspace
 	return part
+end
+
+local function buildSnapshot(userId: number, ended: Types.ChaosEventResult?): Types.ChaosSnapshot
+	return {
+		ChaosLevel = chaosLevel,
+		ActivationThreshold = ChaosBossConfig.ActivationThreshold,
+		Active = active,
+		BossHealth = bossHealth,
+		BossMaxHealth = ChaosBossConfig.BossMaxHealth,
+		EventId = eventId,
+		Contribution = contributions[userId] or 0,
+		Ended = ended,
+	}
+end
+
+-- endedFor(player) — итог ивента для получателя (только в снимке завершения).
+local function sendSnapshot(player: Player, endedFor: ((player: Player) -> Types.ChaosEventResult)?)
+	if player.Parent == nil then
+		return
+	end
+	-- Ошибка сборки/отправки одному игроку не должна прерывать рассылку остальным
+	-- и события OnEventStarted/OnEventEnded после неё.
+	local ok, err = pcall(function()
+		local ended = if endedFor then endedFor(player) else nil
+		Remotes.ChaosSnapshot:FireClient(player, buildSnapshot(player.UserId, ended))
+	end)
+	if not ok then
+		warn(`[ChaosBossSystem] Снимок Хаоса игроку {player.UserId} не отправлен: {err}`)
+	end
+end
+
+-- Немедленная рассылка всем; endedFor(player) — итог ивента для получателя (снимок завершения).
+local function broadcastNow(endedFor: ((player: Player) -> Types.ChaosEventResult)?)
+	broadcastDirty = false
+	lastBroadcastAt = os.clock()
+	for _, player in Players:GetPlayers() do
+		sendSnapshot(player, endedFor)
+	end
+end
+
+-- Изменение шкалы/HP/вклада: сразу, если интервал с прошлой рассылки прошёл, иначе —
+-- одна отложенная рассылка на конец интервала (с состоянием на момент отправки).
+local function markDirty()
+	broadcastDirty = true
+	if broadcastScheduled then
+		return
+	end
+	local waitFor = lastBroadcastAt + ChaosBossConfig.SnapshotInterval - os.clock()
+	if waitFor <= 0 then
+		broadcastNow(nil)
+		return
+	end
+	broadcastScheduled = true
+	task.delay(waitFor, function()
+		broadcastScheduled = false
+		-- Старт/конец ивента могли уже разослать актуальное состояние.
+		if broadcastDirty then
+			broadcastNow(nil)
+		end
+	end)
 end
 
 -- Выдача награды игроку на сервере: проверки и запись без yield. Возвращает выданную сумму;
@@ -209,6 +287,16 @@ local function finishEvent(outcome: Outcome)
 		end
 	end
 
+	-- Снимок завершения — каждому на сервере, с его итогом (0 — не участвовал / вышел и вернулся без профиля).
+	broadcastNow(function(player: Player): Types.ChaosEventResult
+		return {
+			EventId = finishedId,
+			Outcome = outcome,
+			Damage = finished[player.UserId] or 0,
+			Reward = rewards[player.UserId] or 0,
+		}
+	end)
+
 	ChaosBossSystem.OnEventEnded:Fire(finishedId, outcome, rewards)
 end
 
@@ -229,6 +317,7 @@ local function startEvent()
 		end
 	end)
 
+	broadcastNow(nil)
 	ChaosBossSystem.OnEventStarted:Fire(startedId)
 end
 
@@ -237,6 +326,7 @@ local function onEssenceProduced(_player: Player, _amount: number, emotionType: 
 		return
 	end
 
+	local previous = chaosLevel
 	if emotionType == "Fearful" then
 		chaosLevel = math.min(chaosLevel + ChaosBossConfig.FearfulGainPerEvent, ChaosBossConfig.ActivationThreshold)
 	elseif emotionType == "Joyful" then
@@ -246,7 +336,15 @@ local function onEssenceProduced(_player: Player, _amount: number, emotionType: 
 	end
 
 	if chaosLevel >= ChaosBossConfig.ActivationThreshold then
-		startEvent()
+		-- Старт рассылает сам, сразу. Если создание босса бросило — шкала всё равно
+		-- изменилась: клиенты должны её увидеть.
+		local ok, err = pcall(startEvent)
+		if not ok then
+			warn(`[ChaosBossSystem] Не удалось начать ивент: {err}`)
+			markDirty()
+		end
+	elseif chaosLevel ~= previous then
+		markDirty()
 	end
 end
 
@@ -290,7 +388,9 @@ local function tryAttack(player: Player, now: number): string?
 	end
 
 	if bossHealth <= 0 then
-		finishEvent("Victory")
+		finishEvent("Victory") -- рассылает сам, сразу
+	else
+		markDirty()
 	end
 	return nil
 end
@@ -337,13 +437,39 @@ function ChaosBossSystem.GetContribution(userId: number): number
 	return contributions[userId] or 0
 end
 
+-- Вошедшему игроку — актуальное состояние сразу (вклад по UserId: реджойн посреди боя видит
+-- свой урон) и один повтор: RemoteEvent не ставится в очередь, клиент мог не успеть
+-- подписаться. Повтор собирается заново, устаревшее состояние не шлётся.
+local function sendInitialSnapshot(player: Player)
+	sendSnapshot(player, nil)
+	task.delay(ChaosBossConfig.InitialSnapshotResendDelay, function()
+		sendSnapshot(player, nil)
+	end)
+end
+
 function ChaosBossSystem.Init()
 	FactorySystem.OnEssenceProduced:Connect(onEssenceProduced)
 	Remotes.RequestAttackBoss.OnServerEvent:Connect(onRequestAttackBoss)
 
+	-- ChaosSnapshot — только сервер → клиент; FireServer означает модифицированный клиент.
+	-- Пишем только Name/UserId, один раз за сессию.
+	Remotes.ChaosSnapshot.OnServerEvent:Connect(function(player: Player)
+		if reportedForeignFires[player] then
+			return
+		end
+		reportedForeignFires[player] = true
+		warn(`[ChaosBossSystem] Клиент вызвал серверный вход ChaosSnapshot: {player.Name} ({player.UserId})`)
+	end)
+
+	Players.PlayerAdded:Connect(sendInitialSnapshot)
+	for _, player in Players:GetPlayers() do
+		sendInitialSnapshot(player)
+	end
+
 	-- Кулдаун/rate limit — по Player и уходят вместе с ним; вклад (по UserId) остаётся до завершения.
 	Players.PlayerRemoving:Connect(function(player)
 		playerStates[player] = nil
+		reportedForeignFires[player] = nil
 	end)
 end
 

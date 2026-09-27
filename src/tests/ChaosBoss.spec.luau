@@ -20,7 +20,7 @@ end
 -- ChaosBossSystem в изоляции: FactorySystem подменён (настоящий Signal OnEssenceProduced +
 -- счётчик PushSnapshot), DataSystem — профили в памяти, ремоута — перехват обработчика.
 -- configPatch — поля ChaosBossConfig, подменяемые для теста (без load-time проверок).
-local function setup(configPatch: { [string]: any }?)
+local function setup(configPatch: { [string]: any }?, beforeInit: ((world: any) -> ())?)
 	local world = Harness.NewWorld()
 	local _, dataSystem = world:NewServer()
 	local profiles = {}
@@ -43,7 +43,19 @@ local function setup(configPatch: { [string]: any }?)
 		end,
 		BuildDefaultProfile = dataSystem.BuildDefaultProfile,
 	}
+	-- Отправленные ChaosSnapshot: { Player, Snapshot, At } в порядке отправки.
+	local sent = {}
 	local fakeRemotes = {
+		ChaosSnapshot = {
+			OnServerEvent = {
+				Connect = function(_self, fn)
+					handlers.ChaosSnapshot = fn
+				end,
+			},
+			FireClient = function(_self, player, snapshot)
+				table.insert(sent, { Player = player, Snapshot = snapshot, At = world.Now })
+			end,
+		},
 		RequestAttackBoss = {
 			OnServerEvent = {
 				Connect = function(_self, fn)
@@ -68,6 +80,9 @@ local function setup(configPatch: { [string]: any }?)
 		["src/shared/Remotes"] = fakeRemotes,
 		["src/shared/Config/ChaosBossConfig"] = config,
 	})
+	if beforeInit then
+		beforeInit(world)
+	end
 	system.Init()
 
 	local ended = {}
@@ -76,6 +91,8 @@ local function setup(configPatch: { [string]: any }?)
 	end)
 
 	local t = {
+		Sent = sent,
+		Handlers = handlers,
 		Profiles = profiles,
 		World = world,
 		System = system,
@@ -117,11 +134,40 @@ local function setup(configPatch: { [string]: any }?)
 
 	-- Выход с сервера: как Players после PlayerRemoving (Parent = nil, нет в GetPlayers).
 	function t.Leave(player)
+		world:FirePlayerRemoving(player)
 		player.Parent = nil
 		local index = table.find(world.Players, player)
 		if index then
 			table.remove(world.Players, index)
 		end
+	end
+
+	-- Снимки, отправленные игроку (по UserId и, если передан, конкретному Player).
+	function t.SentTo(userId: number, player: any?)
+		local list = {}
+		for _, entry in sent do
+			if entry.Player.UserId == userId and (player == nil or entry.Player == player) then
+				table.insert(list, entry.Snapshot)
+			end
+		end
+		return list
+	end
+
+	function t.LastTo(userId: number, player: any?)
+		local list = t.SentTo(userId, player)
+		return list[#list]
+	end
+
+	function t.ClearSent()
+		table.clear(sent)
+	end
+
+	-- Вход игрока на сервер (PlayerAdded) после Init.
+	function t.Join(userId: number)
+		local player = world:NewPlayer(userId)
+		table.insert(world.Players, player)
+		world:FirePlayerAdded(player)
+		return player
 	end
 
 	function t.Produce(emotion: string, count: number?)
@@ -514,6 +560,232 @@ test("Реджойн до завершения: вклад по UserId, нагр
 	local essence = data.Currency.Essence
 	t.World:Advance(c.EventDuration)
 	assert(near(data.Currency.Essence, essence + c.DamagePerHit * c.RewardEssencePerDamage))
+end)
+
+------------------------------------------------------------------------------------------
+-- Рассылка ChaosSnapshot
+------------------------------------------------------------------------------------------
+
+test("Старт ивента рассылается всем сразу: общее состояние + личный вклад 0", function()
+	local t = setup()
+	local c = t.Config
+	t.AddPlayer(1)
+	t.AddPlayer(2)
+	t.StartEvent()
+	for _, userId in { 1, 2 } do
+		local snap = t.LastTo(userId)
+		assert(snap, `игрок {userId} получил снимок`)
+		assert(snap.Active == true and snap.BossHealth == c.BossMaxHealth and snap.BossMaxHealth == c.BossMaxHealth)
+		assert(snap.ActivationThreshold == c.ActivationThreshold and snap.EventId == 1)
+		assert(snap.Contribution == 0 and snap.Ended == nil)
+	end
+end)
+
+test("Каждый игрок получает свой Contribution, а не чужой", function()
+	local t = setup()
+	local c = t.Config
+	local a = t.AddPlayer(1)
+	t.AddPlayer(2)
+	t.StartEvent()
+	t.World:Advance(c.SnapshotInterval) -- интервал после рассылки старта прошёл: удар шлётся сразу
+	t.Attack(a)
+	assert(t.LastTo(1).Contribution == c.DamagePerHit, "свой вклад")
+	assert(t.LastTo(2).Contribution == 0, "у второго — его собственный (0)")
+	assert(t.LastTo(2).BossHealth == c.BossMaxHealth - c.DamagePerHit, "общее HP одинаковое")
+end)
+
+test("HP: пачка ударов внутри интервала — одна отложенная рассылка с итоговым HP", function()
+	local t = setup()
+	local c = t.Config
+	local players = {}
+	for userId = 1, 5 do
+		players[userId] = t.AddPlayer(userId)
+	end
+	t.StartEvent()
+	t.ClearSent()
+
+	-- Удары сразу после старта (внутри интервала): ни один не шлётся немедленно.
+	for _, p in players do
+		t.Attack(p)
+	end
+	assert(#t.Sent == 0, `внутри интервала ничего не отправлено, отправлено {#t.Sent}`)
+
+	t.World:Advance(c.SnapshotInterval + 0.01)
+	assert(#t.SentTo(1) == 1, `одна отложенная рассылка, получено {#t.SentTo(1)}`)
+	assert(t.LastTo(1).BossHealth == c.BossMaxHealth - 5 * c.DamagePerHit, "в ней — итоговое HP")
+	assert(#t.Sent == 5, "по одному снимку на игрока")
+
+	-- Долгая серия ударов: соседние рассылки не ближе интервала, последнее HP доходит.
+	t.ClearSent()
+	for _ = 1, 10 do
+		t.Cooldown()
+		for _, p in players do
+			t.Attack(p)
+		end
+	end
+	t.World:Advance(c.SnapshotInterval + 0.01)
+	local times = {}
+	for _, entry in t.Sent do
+		if entry.Player.UserId == 1 then
+			table.insert(times, entry.At)
+		end
+	end
+	assert(#times >= 2, "серия ударов разослана")
+	assert(#times <= 11, `рассылок {#times} при 10 окнах кулдауна — не на каждый удар`)
+	for i = 2, #times do
+		assert(times[i] - times[i - 1] >= c.SnapshotInterval - 1e-9, `интервал {times[i] - times[i - 1]}`)
+	end
+	assert(t.LastTo(1).BossHealth == t.System.GetState().BossHealth, "последнее HP дошло")
+end)
+
+test("Шкала Хаоса рассылается с тем же throttle (для индикатора HUD)", function()
+	local t = setup()
+	local c = t.Config
+	t.AddPlayer(1)
+	t.Produce("Fearful", 10)
+	assert(#t.SentTo(1) == 1, "первое изменение — сразу, остальные ждут")
+	t.World:Advance(c.SnapshotInterval + 0.01)
+	assert(#t.SentTo(1) == 2, `отложенная рассылка, всего {#t.SentTo(1)}`)
+	assert(near(t.LastTo(1).ChaosLevel, 10 * c.FearfulGainPerEvent), "итоговая шкала")
+	assert(t.LastTo(1).Active == false)
+
+	-- Без изменений (Nostalgic) — ничего не шлётся.
+	t.ClearSent()
+	t.Produce("Nostalgic", 3)
+	t.World:Advance(c.SnapshotInterval * 2)
+	assert(#t.Sent == 0)
+end)
+
+test("Конец ивента: награда участникам, 0 — неучаствовавшему, вышедшему — ничего", function()
+	local t = setup({ BossMaxHealth = 20, DamagePerHit = 10 })
+	local c = t.Config
+	local a = t.AddPlayer(1)
+	t.AddPlayer(2) -- не бьёт
+	local leaver = t.AddPlayer(3)
+	t.StartEvent()
+	t.Attack(leaver)
+	t.Leave(leaver)
+	t.ClearSent()
+	t.Attack(a) -- добивает
+
+	local rate = c.RewardEssencePerDamage * c.VictoryRewardMultiplier
+	local endA = t.LastTo(1)
+	assert(endA and endA.Ended, "участник получил снимок завершения сразу")
+	assert(endA.Active == false and endA.BossHealth == 0 and endA.ChaosLevel == 0)
+	assert(endA.Ended.Outcome == "Victory" and endA.Ended.EventId == 1)
+	assert(endA.Ended.Damage == 10 and near(endA.Ended.Reward, 10 * rate))
+	assert(endA.Contribution == 0, "текущий вклад сброшен вместе с ивентом")
+
+	local endB = t.LastTo(2)
+	assert(endB.Ended and endB.Ended.Reward == 0 and endB.Ended.Damage == 0, "не участвовал — 0")
+	assert(#t.SentTo(3) == 0, "вышедшему ничего не отправлено")
+
+	-- Отложенных рассылок после завершения нет (актуальное состояние уже отправлено).
+	local before = #t.Sent
+	t.World:Advance(c.SnapshotInterval * 2)
+	assert(#t.Sent == before, "лишних рассылок нет")
+end)
+
+test("Победа внутри интервала throttle: отложенная рассылка после снимка завершения не уходит", function()
+	local t = setup({ BossMaxHealth = 30, DamagePerHit = 10 })
+	local c = t.Config
+	local a = t.AddPlayer(1)
+	local b = t.AddPlayer(2)
+	local killer = t.AddPlayer(3)
+	t.StartEvent()
+	t.World:Advance(c.SnapshotInterval)
+	t.Attack(a) -- сразу (интервал прошёл)
+	t.Attack(b) -- внутри интервала: запланирована отложенная рассылка
+	t.World:Advance(c.SnapshotInterval / 2)
+	assert(t.LastTo(1).BossHealth == 20, "отложенная ещё не ушла")
+	t.Attack(killer) -- добивает внутри интервала: снимок завершения раньше отложенной
+	assert(t.LastTo(1).Ended, "снимок завершения ушёл")
+	local count = #t.SentTo(1)
+	t.World:Advance(c.SnapshotInterval * 3)
+	assert(#t.SentTo(1) == count, "отложенная рассылка после завершения ничего не отправила")
+end)
+
+test("Конец по таймауту рассылается с Outcome = Timeout и наградой", function()
+	local t = setup()
+	local c = t.Config
+	local a = t.AddPlayer(1)
+	t.StartEvent()
+	t.Attack(a)
+	t.World:Advance(c.EventDuration)
+	local snap = t.LastTo(1)
+	assert(snap.Ended and snap.Ended.Outcome == "Timeout")
+	assert(near(snap.Ended.Reward, c.DamagePerHit * c.RewardEssencePerDamage))
+end)
+
+test("Вошедший посреди боя сразу получает актуальное состояние и ровно один повтор", function()
+	local t = setup()
+	local c = t.Config
+	local a = t.AddPlayer(1)
+	t.StartEvent()
+	t.Attack(a)
+
+	t.Join(7)
+	local first = t.SentTo(7)
+	assert(#first == 1, "снимок сразу при входе")
+	assert(first[1].Active and first[1].BossHealth == c.BossMaxHealth - c.DamagePerHit, "актуальное HP")
+
+	-- Повтор собирается заново и видит изменения после входа.
+	t.Cooldown()
+	t.Attack(a)
+	t.World:Advance(c.InitialSnapshotResendDelay)
+	assert(t.LastTo(7).BossHealth == c.BossMaxHealth - 2 * c.DamagePerHit, "повтор с актуальным HP")
+
+	t.ClearSent()
+	t.World:Advance(c.InitialSnapshotResendDelay * 3)
+	assert(#t.SentTo(7) == 0, "повтор один, не цикл")
+end)
+
+test("Реджойн до конца ивента: новый Player сразу видит свой прежний вклад", function()
+	local t = setup()
+	local c = t.Config
+	local first = t.AddPlayer(1)
+	t.StartEvent()
+	t.Attack(first)
+	t.Leave(first)
+
+	local again = t.Join(1)
+	local snap = t.LastTo(1, again)
+	assert(snap and snap.Contribution == c.DamagePerHit, "вклад по UserId")
+	assert(snap.Active)
+end)
+
+test("Вышедший до повтора первого снимка повтор не получает", function()
+	local t = setup()
+	local c = t.Config
+	local p = t.Join(5)
+	assert(#t.SentTo(5) == 1)
+	t.Leave(p)
+	t.World:Advance(c.InitialSnapshotResendDelay + 0.01)
+	assert(#t.SentTo(5) == 1, "после выхода не шлём")
+end)
+
+test("Игроки, бывшие на сервере до Init, получают начальный снимок", function()
+	local t = setup(nil, function(world)
+		table.insert(world.Players, world:NewPlayer(9))
+	end)
+	assert(#t.SentTo(9) == 1, "снимок при Init")
+	t.World:Advance(t.Config.InitialSnapshotResendDelay + 0.01)
+	assert(#t.SentTo(9) == 2, "и повтор")
+end)
+
+test("FireServer на ChaosSnapshot логируется один раз и ничего не меняет", function()
+	local t = setup()
+	local p = t.AddPlayer(1)
+	t.Handlers.ChaosSnapshot(p, { Active = true })
+	t.Handlers.ChaosSnapshot(p, { Active = true })
+	local count = 0
+	for _, message in t.World.Warnings do
+		if string.find(message, "серверный вход ChaosSnapshot", 1, true) then
+			count += 1
+		end
+	end
+	assert(count == 1, `записей {count}`)
+	assert(not t.System.GetState().Active)
 end)
 
 ------------------------------------------------------------------------------------------

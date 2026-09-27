@@ -14,6 +14,9 @@
 	- Для других экранов (ShopUI) HUD отдаёт последний снимок (GetSnapshot/SnapshotChanged) и
 	  место под кнопку меню (AddMenuButton): экран не подписывается на ремоут сам — события,
 	  пришедшие до подписки, доставляются только первому подписчику, а он — HUD.
+	- Индикатор Хаоса сервера (раздел 5.8) виден всегда: шкала ChaosLevel/ActivationThreshold
+	  из Remotes.ChaosSnapshot (во время ивента — надпись о вторжении). Тот же снимок HUD
+	  отдаёт ChaosEventUI (GetChaosSnapshot/ChaosChanged) по той же причине, что и выше.
 ]]
 
 local Players = game:GetService("Players")
@@ -28,6 +31,7 @@ local BiomeConfig = require(ReplicatedStorage.shared.Config.BiomeConfig)
 local RebirthConfig = require(ReplicatedStorage.shared.Config.RebirthConfig)
 
 type EconomySnapshot = Types.EconomySnapshot
+type ChaosSnapshot = Types.ChaosSnapshot
 
 -- Сколько ждать ответа на покупку, прежде чем разблокировать кнопку (ответ мог не прийти,
 -- например запрос отброшен rate limit'ом сервера).
@@ -58,6 +62,8 @@ local TEXT = {
 	Buy = "Купить: %.0f",
 	Max = "МАКС",
 	Pending = "...",
+	ChaosLabel = "Хаос: %s / %s",
+	ChaosActive = "Вторжение Кошмара!",
 }
 
 local BUTTON_ENABLED = Color3.fromRGB(80, 170, 90)
@@ -78,6 +84,8 @@ local HUD = {}
 
 -- (snapshot: EconomySnapshot) — после каждого валидного снимка сервера.
 HUD.SnapshotChanged = Signal.new()
+-- (snapshot: ChaosSnapshot) — после каждого валидного снимка Хаоса.
+HUD.ChaosChanged = Signal.new()
 
 local snapshot: EconomySnapshot? = nil
 local menuFrame: Frame
@@ -85,6 +93,11 @@ local menuButtonCount = 0
 local essenceLabel: TextLabel
 local fragmentsLabel: TextLabel
 local rows: { [string]: Row } = {}
+
+-- Индикатор Хаоса (под счётчиком Essence; только отображение, кликов нет).
+local chaosSnapshot: ChaosSnapshot? = nil
+local chaosBarFill: Frame
+local chaosLabel: TextLabel
 
 -- Блок Rebirth (левый нижний угол): биом/множитель из снимка, прогресс Essence → MinEssence.
 local biomeLabel: TextLabel
@@ -293,6 +306,67 @@ local function isValidSnapshot(value: unknown): boolean
 		and type(candidate.Levels) == "table"
 end
 
+-- Шкала — из последнего снимка Хаоса; до первого снимка — «Загрузка...».
+local function refreshChaos()
+	local snap = chaosSnapshot
+	if not snap then
+		chaosBarFill.Size = UDim2.fromScale(0, 1)
+		chaosLabel.Text = TEXT.Waiting
+		return
+	end
+	local threshold = snap.ActivationThreshold
+	local fraction = if snap.Active then 1 else math.clamp(snap.ChaosLevel / threshold, 0, 1)
+	chaosBarFill.Size = UDim2.fromScale(fraction, 1)
+	chaosBarFill.BackgroundColor3 = if snap.Active then Color3.fromRGB(220, 60, 80) else Color3.fromRGB(170, 70, 190)
+	chaosLabel.Text = if snap.Active
+		then TEXT.ChaosActive
+		else string.format(
+			TEXT.ChaosLabel,
+			string.format("%.0f", math.floor(snap.ChaosLevel)),
+			string.format("%.0f", threshold)
+		)
+end
+
+-- Снимок Хаоса тоже проверяем по форме: битые числа не должны ронять UI.
+local function isValidChaosSnapshot(value: unknown): boolean
+	if type(value) ~= "table" then
+		return false
+	end
+	local candidate = value :: any
+	local isFinite = UpgradeEffects.IsFinite
+	if candidate.Ended ~= nil then
+		local ended = candidate.Ended
+		if
+			type(ended) ~= "table"
+			or not isFinite(ended.Reward)
+			or not isFinite(ended.Damage)
+			or not isFinite(ended.EventId)
+			or (ended.Outcome ~= "Victory" and ended.Outcome ~= "Timeout")
+		then
+			return false
+		end
+	end
+	return isFinite(candidate.ChaosLevel)
+		and isFinite(candidate.ActivationThreshold)
+		and candidate.ActivationThreshold > 0
+		and type(candidate.Active) == "boolean"
+		and isFinite(candidate.BossHealth)
+		and isFinite(candidate.BossMaxHealth)
+		and candidate.BossMaxHealth > 0
+		and isFinite(candidate.EventId)
+		and isFinite(candidate.Contribution)
+end
+
+local function onChaosSnapshot(value: unknown)
+	if not isValidChaosSnapshot(value) then
+		return
+	end
+	local newSnapshot = value :: ChaosSnapshot
+	chaosSnapshot = newSnapshot
+	refreshChaos()
+	HUD.ChaosChanged:Fire(newSnapshot)
+end
+
 local function onSnapshot(value: unknown)
 	if not isValidSnapshot(value) then
 		return
@@ -326,6 +400,22 @@ local function build(): ScreenGui
 	essenceFrame.Parent = gui
 	essenceLabel = makeLabel(essenceFrame, "", UDim2.new(1, -16, 0, 36), UDim2.fromOffset(8, 4))
 	fragmentsLabel = makeLabel(essenceFrame, "", UDim2.new(1, -16, 0, 32), UDim2.fromOffset(8, 44))
+
+	-- Индикатор Хаоса — под счётчиком Essence: левый верх занят чатом CoreGui, но индикатор
+	-- только отображает, кликов в нём нет.
+	local chaosFrame = Instance.new("Frame")
+	chaosFrame.Size = UDim2.fromOffset(260, 34)
+	chaosFrame.Position = UDim2.fromOffset(12, 98)
+	chaosFrame.BackgroundColor3 = Color3.fromRGB(45, 20, 45)
+	chaosFrame.BackgroundTransparency = 0.25
+	chaosFrame.Parent = gui
+	chaosBarFill = Instance.new("Frame")
+	chaosBarFill.Size = UDim2.fromScale(0, 1)
+	chaosBarFill.BackgroundColor3 = Color3.fromRGB(170, 70, 190)
+	chaosBarFill.BorderSizePixel = 0
+	chaosBarFill.Parent = chaosFrame
+	chaosLabel = makeLabel(chaosFrame, "", UDim2.new(1, -16, 1, -6), UDim2.fromOffset(8, 3))
+	chaosLabel.TextXAlignment = Enum.TextXAlignment.Center
 
 	-- Кнопки меню (магазин и т.п.) — столбиком у левого края по центру, добавляются через
 	-- AddMenuButton. Не под счётчиком Essence: левый верхний угол занят окном чата CoreGui,
@@ -410,6 +500,11 @@ function HUD.GetSnapshot(): EconomySnapshot?
 	return snapshot
 end
 
+-- Последний валидный снимок Хаоса или nil, пока он не пришёл.
+function HUD.GetChaosSnapshot(): ChaosSnapshot?
+	return chaosSnapshot
+end
+
 -- Добавляет кнопку в меню HUD (вызывать после Init). onClick — только открытие/закрытие
 -- интерфейса, игровых действий по клику нет.
 function HUD.AddMenuButton(text: string, onClick: () -> ()): TextButton
@@ -432,11 +527,13 @@ function HUD.Init()
 	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 	local gui = build()
 	refreshAll()
+	refreshChaos()
 	gui.Parent = playerGui
 
 	-- Сервер шлёт первый снимок сразу после загрузки профиля; события, пришедшие
 	-- до подключения обработчика, Roblox держит в очереди и доставит сюда.
 	Remotes.EconomySnapshot.OnClientEvent:Connect(onSnapshot)
+	Remotes.ChaosSnapshot.OnClientEvent:Connect(onChaosSnapshot)
 end
 
 return HUD

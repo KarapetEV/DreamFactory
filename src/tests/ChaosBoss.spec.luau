@@ -820,4 +820,41 @@ test("ChaosBossConfig: некорректные значения роняют з
 	end
 end)
 
+------------------------------------------------------------------------------------------
+-- Аналитика и сигнал удара (S18)
+------------------------------------------------------------------------------------------
+
+local function customEvents(world, name: string)
+	local list = {}
+	for _, event in world.AnalyticsEvents do
+		if event.Kind == "Custom" and event.Name == name then
+			table.insert(list, event)
+		end
+	end
+	return list
+end
+
+test("Участие в Хаос-ивенте: ChaosEventJoined один раз на игрока за ивент; OnBossHit на каждый удар", function()
+	local t = setup()
+	local p1 = t.AddPlayer(1, 5)
+	local p2 = t.AddPlayer(2, 5)
+	local hits = {}
+	t.System.OnBossHit:Connect(function(player, dealt, id)
+		table.insert(hits, { Player = player, Dealt = dealt, EventId = id })
+	end)
+	t.StartEvent()
+	local eventId = t.System.GetState().EventId
+
+	t.Attack(p1)
+	t.Attack(p1) -- кулдаун: не засчитан
+	t.Cooldown()
+	t.Attack(p1)
+	t.Attack(p2)
+	local joined = customEvents(t.World, "ChaosEventJoined")
+	assert(#joined == 2, `событий участия {#joined}`)
+	assert(joined[1].Player == p1 and joined[1].Value == eventId and joined[2].Player == p2)
+	assert(#hits == 3, `засчитанных ударов {#hits}`)
+	assert(hits[1].Player == p1 and hits[1].Dealt == t.Config.DamagePerHit and hits[1].EventId == eventId)
+end)
+
 return tests

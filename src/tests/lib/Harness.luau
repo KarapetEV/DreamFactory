@@ -128,6 +128,15 @@ function Harness.NewWorld()
 	end
 	-- Все инстансы, созданные через Instance.new внутри мира (в порядке создания).
 	self.Instances = {} :: { any }
+	-- Вызовы AnalyticsService в порядке вызова: { Kind = "Custom", Player, Name, Value,
+	-- CustomFields } (LogCustomEvent) или { Kind = "Funnel", Player, Step, StepName }
+	-- (LogOnboardingFunnelStepEvent).
+	self.AnalyticsEvents = {} :: { any }
+	-- Ошибка, которую бросает каждый вызов AnalyticsService (nil — вызовы проходят).
+	self.AnalyticsError = nil :: string?
+	-- Подмена исходника модуля при загрузке: путь (без .luau) -> функция(source) -> source.
+	-- Для проверки assert'ов конфигов на битых данных.
+	self.SourcePatches = {} :: { [string]: (source: string) -> string }
 	self._sleeping = {} :: { { at: number, seq: number, co: thread } }
 	self._seq = 0
 	self._guid = 0
@@ -279,6 +288,31 @@ function World:_makeEnv(moduleCache: { [string]: any }, scriptPath: string?): { 
 			end,
 		},
 		Workspace = { Name = "Workspace" },
+		AnalyticsService = {
+			LogCustomEvent = function(_self: any, player: any, eventName: string, value: number?, customFields: any?)
+				if world.AnalyticsError then
+					error(world.AnalyticsError, 0)
+				end
+				table.insert(world.AnalyticsEvents, {
+					Kind = "Custom",
+					Player = player,
+					Name = eventName,
+					Value = value,
+					CustomFields = customFields,
+				})
+			end,
+			LogOnboardingFunnelStepEvent = function(_self: any, player: any, step: number, stepName: string?)
+				if world.AnalyticsError then
+					error(world.AnalyticsError, 0)
+				end
+				table.insert(world.AnalyticsEvents, {
+					Kind = "Funnel",
+					Player = player,
+					Step = step,
+					StepName = stepName,
+				})
+			end,
+		},
 		MarketplaceService = {
 			UserOwnsGamePassAsync = function(_self: any, userId: number, gamePassId: number): any
 				local ownership = world.GamePassOwnership
@@ -354,6 +388,11 @@ function World:_makeEnv(moduleCache: { [string]: any }, scriptPath: string?): { 
 		ProductPurchaseDecision = { PurchaseGranted = "PurchaseGranted", NotProcessedYet = "NotProcessedYet" },
 		PartType = { Ball = "Ball" },
 		Material = { Neon = "Neon" },
+		AnalyticsCustomFieldKeys = {
+			CustomField01 = { Name = "CustomField01" },
+			CustomField02 = { Name = "CustomField02" },
+			CustomField03 = { Name = "CustomField03" },
+		},
 	}
 	env.Vector3 = { new = newVector3 }
 	env.Color3 = {
@@ -421,6 +460,10 @@ function World:_loadModule(path: string, moduleCache: { [string]: any }): any
 
 	local rt = getRuntime()
 	local source = rt.ReadFile(path .. ".luau")
+	local patch = self.SourcePatches[path]
+	if patch then
+		source = patch(source)
+	end
 	local chunk = rt.Load(source, path, self:_makeEnv(moduleCache, path))
 	local result = chunk()
 	moduleCache[path] = if result == nil then false else result

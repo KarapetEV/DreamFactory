@@ -66,13 +66,23 @@ export type PlayerProfile = {
 		-- профиле», пишутся одной записью с самой выдачей. Закрытых сверх
 		-- DevProductConfig.ProfileReceiptHistory вытесняются старейшие; незакрытые — никогда.
 		ProcessedReceipts: { ReceiptMarker },
+		-- Сезонный пропуск (BattlePassSystem, BattlePassConfig). SeasonId ≠ BattlePassConfig.SeasonId
+		-- (в т.ч. nil — сезона ещё не было) — прогресс сбрасывается при первом начислении XP.
 		BattlePassSeasonId: string?,
-		BattlePassTier: number,
+		BattlePassTier: number, -- 0..MaxTier, достигнутый тир
+		BattlePassXP: number, -- XP внутри текущего тира (0 на MaxTier)
+		BattlePassPremium: boolean, -- премиум-ветка куплена в сезоне BattlePassSeasonId
 	},
 	Meta: {
 		FirstJoinAt: number,
 		LastLoginAt: number,
 		SchemaVersion: number,
+		-- Воронка первых 10 минут (AnalyticsSystem.RecordFunnelStep): os.time() первого события
+		-- каждого вида; nil — ещё не было. Заполненное поле — шаг уже залогирован.
+		FirstCollectAt: number?,
+		FirstProcessAt: number?,
+		FirstUpgradeAt: number?,
+		FirstPetAt: number?,
 	},
 }
 

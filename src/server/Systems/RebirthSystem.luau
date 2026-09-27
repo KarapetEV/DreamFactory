@@ -28,6 +28,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Types = require(ReplicatedStorage.shared.Types)
 local Remotes = require(ReplicatedStorage.shared.Remotes)
+local Signal = require(ReplicatedStorage.shared.Signal)
 local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
 local RebirthProgress = require(ReplicatedStorage.shared.RebirthProgress)
 local FragmentBuffer = require(ReplicatedStorage.shared.FragmentBuffer)
@@ -36,6 +37,7 @@ local RebirthConfig = require(ReplicatedStorage.shared.Config.RebirthConfig)
 local StartingProfileConfig = require(ReplicatedStorage.shared.Config.StartingProfileConfig)
 local DataSystem = require(script.Parent.DataSystem)
 local FactorySystem = require(script.Parent.FactorySystem)
+local AnalyticsSystem = require(script.Parent.AnalyticsSystem)
 local RateLimiter = require(script.Parent.Parent.Services.RateLimiter)
 
 type PlayerProfile = Types.PlayerProfile
@@ -87,6 +89,10 @@ end
 
 local RebirthSystem = {}
 
+-- (player: Player, newCount: number, essenceBefore: number) — rebirth выполнен и записан;
+-- essenceBefore — Essence, обнулённая сбросом. Подписчик — BattlePassSystem (XP).
+RebirthSystem.OnRebirthPerformed = Signal.new()
+
 local playerStates: { [Player]: PlayerState } = {}
 
 local function getPlayerState(player: Player): PlayerState
@@ -134,7 +140,7 @@ end
 
 -- Единая транзакция rebirth: проверки и запись без yield. Возвращает nil при успехе
 -- или причину отказа (для лога; клиенту причина не отправляется).
-local function tryRebirth(player: Player): string?
+local function tryRebirth(player: Player): (string?, number?, number?)
 	local data = DataSystem.GetData(player)
 	if not data then
 		return "no-profile"
@@ -184,7 +190,7 @@ local function tryRebirth(player: Player): string?
 	rebirth.ClarityMultiplier = progress.ClarityMultiplier
 	rebirth.CurrentBiome = progress.CurrentBiome
 	rebirth.Count = newCount
-	return nil
+	return nil, newCount, essence
 end
 
 local function onPerformRebirth(player: Player)
@@ -203,7 +209,7 @@ local function onPerformRebirth(player: Player)
 
 	-- tryRebirth не пишет в профиль до последней проверки, поэтому исключение на
 	-- неожиданно битых данных ничего не портит; ловим, чтобы ответить и не спамить лог.
-	local ok, result = pcall(tryRebirth, player)
+	local ok, result, newCount, essenceBefore = pcall(tryRebirth, player)
 	local reason: string? = if ok then result else "error"
 	if not ok then
 		reportCorruption(player, `ошибка PerformRebirth: {result}`)
@@ -213,6 +219,13 @@ local function onPerformRebirth(player: Player)
 	end
 
 	FactorySystem.PushSnapshot(player, reason == nil)
+
+	if reason == nil and newCount and essenceBefore then
+		-- Rebirth атомарен: конец старого цикла и начало нового — один момент.
+		AnalyticsSystem.LogEvent(player, AnalyticsSystem.Events.RebirthCycleEnded, essenceBefore)
+		AnalyticsSystem.LogEvent(player, AnalyticsSystem.Events.RebirthCycleStarted, newCount)
+		RebirthSystem.OnRebirthPerformed:Fire(player, newCount, essenceBefore)
+	end
 end
 
 function RebirthSystem.Init()

@@ -38,7 +38,7 @@ local STORE_NAME = "PlayerProfiles"
 local AUTOSAVE_INTERVAL = 4 * 60
 
 -- Поднимать на 1 при любом изменении структуры PlayerProfile + добавлять миграцию ниже.
-local CURRENT_SCHEMA_VERSION = 6
+local CURRENT_SCHEMA_VERSION = 7
 
 --[[
 	MIGRATIONS[n] переводит данные со SchemaVersion n на n + 1, мутируя таблицу на месте.
@@ -63,6 +63,10 @@ local CURRENT_SCHEMA_VERSION = 6
 	пуст). Битое число (NaN, отрицательное) не трогаем — о порче сообщит конвейер, как и до
 	миграции. Ключи зашиты здесь, а не взяты из конфига: миграция не должна меняться вместе с
 	конфигом; новые эмоции дозаполнит reconcile().
+	6 → 7: сезонный пропуск и воронка аналитики (S18). Monetization.BattlePassXP = 0 и
+	BattlePassPremium = false дозаполнит reconcile(); BattlePassSeasonId остаётся nil («сезона не
+	было» — BattlePassSystem сбросит прогресс при первом начислении XP). Meta.First*At остаются nil:
+	у старых игроков шаги воронки, пройденные до S18, разово залогируются позже (некритично).
 
 	Пример на будущее:
 	[1] = function(data)
@@ -94,6 +98,7 @@ local MIGRATIONS: { [number]: (data: any) -> () } = {
 			factory.RawFragments = { Joyful = 0, Nostalgic = old, Fearful = 0 }
 		end
 	end,
+	[6] = function(_data: any) end,
 }
 
 for version = 0, CURRENT_SCHEMA_VERSION - 1 do
@@ -176,11 +181,17 @@ function DataSystem.BuildDefaultProfile(): PlayerProfile
 			ProcessedReceipts = {},
 			BattlePassSeasonId = nil,
 			BattlePassTier = start.BattlePassTier,
+			BattlePassXP = 0,
+			BattlePassPremium = false,
 		},
 		Meta = {
 			FirstJoinAt = now,
 			LastLoginAt = now,
 			SchemaVersion = CURRENT_SCHEMA_VERSION,
+			FirstCollectAt = nil,
+			FirstProcessAt = nil,
+			FirstUpgradeAt = nil,
+			FirstPetAt = nil,
 		},
 	}
 end

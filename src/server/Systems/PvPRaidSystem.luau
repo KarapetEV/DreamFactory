@@ -52,6 +52,7 @@ local GuardConfig = require(ReplicatedStorage.shared.Config.GuardConfig)
 local DataSystem = require(script.Parent.DataSystem)
 local FactorySystem = require(script.Parent.FactorySystem)
 local PetSystem = require(script.Parent.PetSystem)
+local AnalyticsSystem = require(script.Parent.AnalyticsSystem)
 local RateLimiter = require(script.Parent.Parent.Services.RateLimiter)
 
 type PlayerProfile = Types.PlayerProfile
@@ -408,6 +409,7 @@ local function onRequestRaidStart(player: Player, targetUserId: unknown)
 	-- Перенос уже в обоих профилях: ошибки снимков/подписчиков его не отменяют.
 	pushSnapshot(player)
 	pushSnapshot(target)
+	AnalyticsSystem.LogEvent(player, AnalyticsSystem.Events.PvPRaid, stolen)
 	PvPRaidSystem.OnRaidCompleted:Fire(player, target, stolen)
 end
 

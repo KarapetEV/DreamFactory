@@ -38,6 +38,7 @@ local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
 local FragmentBuffer = require(ReplicatedStorage.shared.FragmentBuffer)
 local DataSystem = require(script.Parent.DataSystem)
 local PetSystem = require(script.Parent.PetSystem)
+local AnalyticsSystem = require(script.Parent.AnalyticsSystem)
 local RateLimiter = require(script.Parent.Parent.Services.RateLimiter)
 
 type PlayerProfile = Types.PlayerProfile
@@ -283,6 +284,7 @@ local function collectFragment(player: Player, data: PlayerProfile, fragment: Fr
 	buffer[fragment.EmotionType] += math.min(CollectionConfig.FragmentValue, space)
 	state.LastCollectAt = now
 	removeFragment(fragment)
+	AnalyticsSystem.RecordFunnelStep(player, data, "FirstCollect")
 	return nil
 end
 

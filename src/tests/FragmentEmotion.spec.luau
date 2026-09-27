@@ -294,7 +294,7 @@ end)
 test("Миграция v5 → v6: число целиком уходит в Nostalgic, сумма не теряется", function()
 	local world = Harness.NewWorld()
 	local _, dataSystem = world:NewServer()
-	assert(dataSystem.CURRENT_SCHEMA_VERSION == 6)
+	assert(dataSystem.CURRENT_SCHEMA_VERSION >= 6)
 	for _, old in { 0, 7, 2.5, 1_000_000 } do
 		local v5 = { Meta = { SchemaVersion = 5 }, Factory = { RawFragments = old, StorageCapacityLevel = 2 } }
 		local migrated = assert(dataSystem.MigrateProfileData(v5))
@@ -450,6 +450,37 @@ test("FragmentBuffer: Empty и Total (сумма, порча)", function()
 	assert(fragmentBuffer.Total(buffer(1, math.huge, 3)) == nil)
 	assert(fragmentBuffer.Total(7) == nil)
 	assert(fragmentBuffer.Total({ Joyful = 1 }) == nil, "без какой-то эмоции — порча")
+end)
+
+------------------------------------------------------------------------------------------
+-- Аналитика (S18): шаг воронки «первый сбор»
+------------------------------------------------------------------------------------------
+
+test("Воронка: первый сбор фрагмента — шаг 1 ровно один раз, момент в Meta.FirstCollectAt", function()
+	local t = collectionSetup()
+	t.Collection.Init()
+	local rejected = t.Fragments()[1]
+	t.Data.Factory.RawFragments = buffer(0 / 0, 0, 0)
+	t.Collect(rejected)
+	assert(#t.World.AnalyticsEvents == 0 and t.Data.Meta.FirstCollectAt == nil, "отказ — не шаг воронки")
+
+	t.Data.Factory.RawFragments = buffer(0, 0, 0)
+	t.Collect(rejected)
+	assert(rejected.Destroyed)
+	local at = t.Data.Meta.FirstCollectAt
+	assert(type(at) == "number", "момент записан")
+	local event = t.World.AnalyticsEvents[1]
+	assert(#t.World.AnalyticsEvents == 1 and event.Kind == "Funnel", "один вызов воронки")
+	assert(event.Player == t.Player and event.Step == 1 and event.StepName == "FirstCollect")
+
+	for _ = 1, 3 do
+		local fragment = t.Fragments()[1]
+		if fragment then
+			t.Collect(fragment)
+		end
+	end
+	assert(#t.World.AnalyticsEvents == 1, "повторные сборы не логируются")
+	assert(t.Data.Meta.FirstCollectAt == at, "поле не перезаписано")
 end)
 
 return tests

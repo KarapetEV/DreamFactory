@@ -51,6 +51,7 @@ local FragmentEmotionConfig = require(ReplicatedStorage.shared.Config.FragmentEm
 local FragmentBuffer = require(ReplicatedStorage.shared.FragmentBuffer)
 local DataSystem = require(script.Parent.DataSystem)
 local PetSystem = require(script.Parent.PetSystem)
+local AnalyticsSystem = require(script.Parent.AnalyticsSystem)
 local RateLimiter = require(script.Parent.Parent.Services.RateLimiter)
 
 type PlayerProfile = Types.PlayerProfile
@@ -102,8 +103,11 @@ local FactorySystem = {}
 
 -- (player: Player, amount: number, emotionType: EmotionType) — после начисления Essence
 -- конвейером, по событию на каждый тип, переработанный в цикле (amount — выход этого типа,
--- уже с модификатором). Подписчик — будущий ChaosBossSystem (раздел 5.5).
+-- уже с модификатором). Подписчики — ChaosBossSystem (шкала Хаоса), BattlePassSystem (XP).
 FactorySystem.OnEssenceProduced = Signal.new()
+-- (player: Player, upgradeId: string, newLevel: number) — после успешной покупки апгрейда
+-- (Essence списана, уровень записан).
+FactorySystem.OnUpgradePurchased = Signal.new()
 
 local playerStates: { [Player]: PlayerState } = {}
 -- Игроки, чей вызов FireServer на односторонний EconomySnapshot уже записан в лог.
@@ -243,6 +247,8 @@ local function tryPurchase(player: Player, upgradeId: unknown, targetLevel: unkn
 
 	data.Currency.Essence = newEssence
 	setLevel(data, track.Id, currentLevel + 1)
+	AnalyticsSystem.RecordFunnelStep(player, data, "FirstUpgrade")
+	FactorySystem.OnUpgradePurchased:Fire(player, track.Id, currentLevel + 1)
 	return nil
 end
 
@@ -463,6 +469,7 @@ local function runConveyor(player: Player, data: PlayerProfile, now: number)
 	-- Сдвиг расписания на delay, а не на now: иначе каждый цикл округлялся бы вверх до шага тика.
 	-- Отставание больше чем на цикл (лаг сервера) не копим — «догонять» пачкой не даём.
 	state.LastCycleAt = if now - state.LastCycleAt >= 2 * delay then now else state.LastCycleAt + delay
+	AnalyticsSystem.RecordFunnelStep(player, data, "FirstProcess")
 	for _, output in outputs do
 		FactorySystem.OnEssenceProduced:Fire(player, output.Amount, output.EmotionType)
 	end

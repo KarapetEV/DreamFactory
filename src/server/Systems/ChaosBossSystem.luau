@@ -51,6 +51,7 @@ local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
 local ChaosBossConfig = require(ReplicatedStorage.shared.Config.ChaosBossConfig)
 local DataSystem = require(script.Parent.DataSystem)
 local FactorySystem = require(script.Parent.FactorySystem)
+local AnalyticsSystem = require(script.Parent.AnalyticsSystem)
 local RateLimiter = require(script.Parent.Parent.Services.RateLimiter)
 
 export type Outcome = "Victory" | "Timeout"
@@ -87,6 +88,9 @@ ChaosBossSystem.OnEventStarted = Signal.new()
 -- (eventId: number, outcome: Outcome, rewards: { [number]: number }) — ивент завершён;
 -- rewards — выданная Essence по UserId (только реально начисленное).
 ChaosBossSystem.OnEventEnded = Signal.new()
+-- (player: Player, dealt: number, eventId: number) — засчитанный удар по боссу (урон уже
+-- урезан до остатка HP и записан во вклад). Подписчик — BattlePassSystem (XP за удар).
+ChaosBossSystem.OnBossHit = Signal.new()
 
 local chaosLevel = 0
 local active = false
@@ -382,10 +386,16 @@ local function tryAttack(player: Player, now: number): string?
 
 	state.LastAttackAt = now
 	bossHealth -= dealt
+	local firstHit = contributions[player.UserId] == nil
 	contributions[player.UserId] = (contributions[player.UserId] or 0) + dealt
 	if bossPart then
 		bossPart:SetAttribute("Health", bossHealth)
 	end
+	if firstHit then
+		-- «Участие в Хаос-ивенте» — один раз на игрока за ивент (первый засчитанный удар).
+		AnalyticsSystem.LogEvent(player, AnalyticsSystem.Events.ChaosEventJoined, eventId)
+	end
+	ChaosBossSystem.OnBossHit:Fire(player, dealt, eventId)
 
 	if bossHealth <= 0 then
 		finishEvent("Victory") -- рассылает сам, сразу

@@ -42,6 +42,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Types = require(ReplicatedStorage.shared.Types)
 local Remotes = require(ReplicatedStorage.shared.Remotes)
+local Signal = require(ReplicatedStorage.shared.Signal)
 local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
 local OddsText = require(ReplicatedStorage.shared.OddsText)
 local CocoonConfig = require(ReplicatedStorage.shared.Config.CocoonConfig)
@@ -49,6 +50,7 @@ local PetConfig = require(ReplicatedStorage.shared.Config.PetConfig)
 local PetSpeciesConfig = require(ReplicatedStorage.shared.Config.PetSpeciesConfig)
 local PetRarityConfig = require(script.Parent.Parent.Config.PetRarityConfig)
 local DataSystem = require(script.Parent.DataSystem)
+local AnalyticsSystem = require(script.Parent.AnalyticsSystem)
 local RateLimiter = require(script.Parent.Parent.Services.RateLimiter)
 
 type PlayerProfile = Types.PlayerProfile
@@ -104,6 +106,10 @@ for cocoonId in CocoonConfig do
 end
 
 local PetSystem = {}
+
+-- (player: Player, petId: string, cocoonId: string) — после успешного HatchCocoon (Essence
+-- списана, пет записан в профиль). Подписчик — BattlePassSystem (XP).
+PetSystem.OnPetHatched = Signal.new()
 
 local rng = Random.new()
 local playerStates: { [Player]: PlayerState } = {}
@@ -470,7 +476,40 @@ local function tryHatch(player: Player, cocoonId: unknown): (string?, string?)
 		Level = 1,
 		Equipped = false,
 	})
+	AnalyticsSystem.RecordFunnelStep(player, data, "FirstPet")
+	PetSystem.OnPetHatched:Fire(player, petId, cocoonId)
 	return nil, petId
+end
+
+--[[
+	Выдача пета наградой другой системы (сезонный пропуск), без ролла и без списания. Без yield.
+	Вид и редкость — из конфига вызывающего (проверены при его загрузке), не от клиента.
+	MaxInventory не проверяется намеренно: награда уже заработана/оплачена и не должна
+	пропадать из-за полного инвентаря (лимит сдерживает только вылупление).
+	Возвращает Id нового пета; nil — раздел Pets повреждён или не удалось получить Id
+	(профиль не изменён). Снимок петов вызывающий отправляет через PushSnapshot.
+]]
+function PetSystem.GrantPet(player: Player, data: PlayerProfile, speciesId: string, rarity: string): string?
+	if PetSpeciesConfig.Species[speciesId] == nil or table.find(PetSpeciesConfig.Rarities, rarity) == nil then
+		return nil
+	end
+	local pets = getPets(player, data)
+	if not pets then
+		return nil
+	end
+	local petId = newPetId(pets)
+	if not petId then
+		return nil
+	end
+	table.insert(pets, {
+		Id = petId,
+		SpeciesId = speciesId,
+		Rarity = rarity,
+		Mutation = nil,
+		Level = 1,
+		Equipped = false,
+	})
+	return petId
 end
 
 local function validPetId(petId: unknown): boolean
@@ -611,6 +650,14 @@ local function makeHandler(ack: string, run: (player: Player, arg: unknown) -> (
 		end
 		sendSnapshot(player, reason == nil, ack, hatchedPetId)
 	end
+end
+
+-- Полный снимок петов владельцу вне ответа на запрос (пет выдан другой системой).
+function PetSystem.PushSnapshot(player: Player)
+	if player.Parent == nil then
+		return
+	end
+	sendSnapshot(player, true, nil, nil)
 end
 
 local onHatchCocoon = makeHandler("HatchCocoon", tryHatch)

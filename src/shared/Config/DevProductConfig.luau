@@ -9,7 +9,9 @@
 	Roblox; клиент лишь открывает окно покупки (PromptProductPurchase) и ничего серверу не
 	докладывает. Размер награды берётся отсюда, не из квитанции.
 
-	В S12 — только паки Эссенции. «Быстрое пробуждение», реролл мутаций, косметика и
+	В S12 — паки Эссенции; в S18 — премиум-ветка сезонного пропуска (Reward.Kind
+	"BattlePassPremium": выдачу делает BattlePassSystem.ApplyPremium через тот же
+	идемпотентный ProcessReceipt). «Быстрое пробуждение», реролл мутаций, косметика и
 	кокон-паки — отдельные сессии (новый Reward.Kind + ветка выдачи в MonetizationSystem).
 
 	Ориентир цены в Robux (для заведения продукта в Creator Dashboard): S 49, M 149, L 349,
@@ -19,11 +21,13 @@
 
 local UpgradeEffects = require(script.Parent.Parent.UpgradeEffects)
 
-export type RewardKind = "Essence"
+export type RewardKind = "Essence" | "BattlePassPremium"
 
 export type DevProductReward = {
 	Kind: RewardKind,
-	Amount: number, -- для "Essence" — сколько начислить в Currency.Essence
+	-- Для "Essence" — сколько начислить в Currency.Essence. Для "BattlePassPremium" — nil:
+	-- награды премиум-ветки берутся из BattlePassConfig.PremiumRewards.
+	Amount: number?,
 }
 
 export type DevProductDefinition = {
@@ -71,6 +75,12 @@ local DevProductConfig: DevProductConfigDefinition = {
 			ProductId = 0, -- ЗАГЛУШКА
 			Reward = { Kind = "Essence", Amount = 20_000 },
 		},
+		{
+			Id = "BattlePassPremium",
+			DisplayName = "Премиум сезонного пропуска",
+			ProductId = 0, -- ЗАГЛУШКА
+			Reward = { Kind = "BattlePassPremium" },
+		},
 	},
 	ProfileReceiptHistory = 50,
 }
@@ -81,6 +91,7 @@ do
 	local isFinite = UpgradeEffects.IsFinite
 	local seenIds: { [string]: true } = {}
 	local seenProductIds: { [number]: string } = {}
+	local battlePassProducts = 0
 	for index, product in DevProductConfig.Products do
 		assert(type(product.Id) == "string" and product.Id ~= "", `DevProductConfig: у продукта #{index} нет Id`)
 		assert(not seenIds[product.Id], `DevProductConfig: Id {product.Id} повторяется`)
@@ -102,12 +113,19 @@ do
 		end
 		local reward = product.Reward
 		assert(type(reward) == "table", `DevProductConfig: у {product.Id} нет Reward`)
-		assert(reward.Kind == "Essence", `DevProductConfig: у {product.Id} неизвестный Reward.Kind {reward.Kind}`)
-		assert(
-			isFinite(reward.Amount) and reward.Amount > 0,
-			`DevProductConfig: у {product.Id} некорректный Reward.Amount {reward.Amount}`
-		)
+		if reward.Kind == "Essence" then
+			assert(
+				isFinite(reward.Amount) and (reward.Amount :: number) > 0,
+				`DevProductConfig: у {product.Id} некорректный Reward.Amount {reward.Amount}`
+			)
+		elseif reward.Kind == "BattlePassPremium" then
+			assert(reward.Amount == nil, `DevProductConfig: у {product.Id} Reward.Amount не используется`)
+			battlePassProducts += 1
+		else
+			error(`DevProductConfig: у {product.Id} неизвестный Reward.Kind {reward.Kind}`)
+		end
 	end
+	assert(battlePassProducts <= 1, "DevProductConfig: больше одного продукта BattlePassPremium")
 	local history = DevProductConfig.ProfileReceiptHistory
 	assert(
 		isFinite(history) and history >= 1 and history % 1 == 0,

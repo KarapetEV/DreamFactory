@@ -46,6 +46,14 @@
 	из DevProductConfig. Неизвестный/заглушечный ProductId и битая квитанция → NotProcessedYet
 	(покупка не теряется: продукт может знать более новая версия сервера) + лог.
 
+	Reward.Kind "BattlePassPremium" (S18) — тот же путь и тот же порядок проверок; вместо
+	начисления Currency награду применяет BattlePassSystem.ApplyPremium (премиум текущего сезона
+	+ ретроактивные премиум-награды пройденных тиров) в той же без-yield секции, что и маркер.
+
+	Аналитика (раздел 9 ТЗ): выдача дев-продукта — после записи лога квитанций (один раз на
+	покупку, повтор доставки её не повторяет); геймпасс — когда Roblox подтвердил владение
+	после PromptGamePassPurchaseFinished.
+
 	ШАНСЫ КОКОНОВ. GetCocoonOddsText строит текст из PetRarityConfig (той же таблицы, что и
 	ролл) через чистую OddsText.Format. Подключение к UI кокон-паков — отдельная сессия.
 
@@ -71,6 +79,8 @@ local PetRarityConfig = require(script.Parent.Parent.Config.PetRarityConfig)
 local DataSystem = require(script.Parent.DataSystem)
 local FactorySystem = require(script.Parent.FactorySystem)
 local PetSystem = require(script.Parent.PetSystem)
+local BattlePassSystem = require(script.Parent.BattlePassSystem)
+local AnalyticsSystem = require(script.Parent.AnalyticsSystem)
 
 type GamePassDefinition = MonetizationConfig.GamePassDefinition
 type DevProductDefinition = DevProductConfig.DevProductDefinition
@@ -255,6 +265,7 @@ local function onPurchaseFinished(player: Player, gamePassId: unknown, wasPurcha
 				return
 			end
 			if refreshPass(player, pass) == true then
+				AnalyticsSystem.LogEvent(player, AnalyticsSystem.Events.GamePassPurchased, 1, pass.Id)
 				return
 			end
 			if attempt < MonetizationConfig.PurchaseRecheckAttempts then
@@ -360,10 +371,17 @@ end
 -- Начисляет награду продукта в профиль (без yield). false — профиль повреждён, ничего не изменено.
 local function applyReward(player: Player, data: PlayerProfile, product: DevProductDefinition): boolean
 	local reward = product.Reward
+	if reward.Kind == "BattlePassPremium" then
+		if not BattlePassSystem.ApplyPremium(player, data) then
+			warn(`[MonetizationSystem] Не выдан {product.Id} игроку {player.Name} ({player.UserId}): профиль повреждён`)
+			return false
+		end
+		return true
+	end
 	if reward.Kind == "Essence" then
 		local currency: any = data.Currency
 		local essence = if type(currency) == "table" then currency.Essence else nil
-		local newEssence = if isFinite(essence) then essence + reward.Amount else nil
+		local newEssence = if isFinite(essence) then essence + (reward.Amount :: number) else nil
 		if newEssence == nil or not isFinite(newEssence) then
 			warn(
 				`[MonetizationSystem] Не выдан {product.Id} игроку {player.Name} ({player.UserId}): `
@@ -486,6 +504,7 @@ local function grantReceipt(
 	if not writeReceiptLog(store, purchaseId, playerId, product) then
 		return Decision.NotProcessedYet
 	end
+	AnalyticsSystem.LogEvent(player, AnalyticsSystem.Events.DevProductPurchased, 1, product.Id)
 	-- Квитанция закрыта логом — маркер можно вытеснять. В DataStore флаг попадёт со следующим
 	-- сохранением; не попадёт (краш) — маркер просто проживёт дольше, двойной выдачи это не даёт.
 	marker.Closed = true

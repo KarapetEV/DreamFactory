@@ -191,20 +191,26 @@ end
 -- Конфиг
 ------------------------------------------------------------------------------------------
 
-test("DevProductConfig: паки Эссенции S/M/L/XL, объём растёт, ProductId — заглушки 0", function()
+test("DevProductConfig: паки Эссенции S/M/L/XL (объём растёт) + премиум пропуска, ProductId — заглушки 0", function()
 	local world = Harness.NewWorld()
 	local config = world:LoadModule("src/shared/Config/DevProductConfig")
 	local ids = {}
 	local previous = 0
 	for _, product in config.Products do
 		table.insert(ids, product.Id)
-		assert(product.Reward.Kind == "Essence", `{product.Id}: Essence-пак`)
-		assert(product.Reward.Amount > previous, `{product.Id}: объём больше предыдущего`)
-		previous = product.Reward.Amount
+		if product.Reward.Kind == "Essence" then
+			assert(product.Reward.Amount > previous, `{product.Id}: объём больше предыдущего`)
+			previous = product.Reward.Amount
+		else
+			assert(product.Reward.Kind == "BattlePassPremium" and product.Reward.Amount == nil, product.Id)
+		end
 		assert(product.ProductId == 0, `{product.Id}: ProductId заглушка`)
 		assert(product.Price == nil, "цены в Robux в конфиге нет")
 	end
-	assert(table.concat(ids, ",") == "EssencePackS,EssencePackM,EssencePackL,EssencePackXL", table.concat(ids, ","))
+	assert(
+		table.concat(ids, ",") == "EssencePackS,EssencePackM,EssencePackL,EssencePackXL,BattlePassPremium",
+		table.concat(ids, ",")
+	)
 end)
 
 test("профиль v4 мигрирует в v5 с пустым ProcessedReceipts, остальное не тронуто", function()
@@ -502,6 +508,24 @@ test("повреждённая Essence или ProcessedReceipts: NotProcessedYet
 	assert(t.Server.Receipt(receipt(42, "p-bad")) == NOT_YET)
 	assert(t.Data.Currency.Essence == t.StartEssence, "без маркеров не выдаём")
 	assert(logRecord(t.World, "p-bad") == nil)
+end)
+
+------------------------------------------------------------------------------------------
+-- Аналитика (S18)
+------------------------------------------------------------------------------------------
+
+test("Выдача дев-продукта: DevProductPurchased один раз, после записи лога; повтор доставки — без события", function()
+	local t = setup()
+	failKeys(t.World, "UpdateAsync", "Receipt_")
+	assert(t.Server.Receipt(receipt(42, "p-a")) == NOT_YET)
+	assert(#t.World.AnalyticsEvents == 0, "квитанция не закрыта — ещё не покупка")
+
+	t.World.StoreError = nil
+	assert(t.Server.Receipt(receipt(42, "p-a")) == GRANTED)
+	assert(t.Server.Receipt(receipt(42, "p-a")) == GRANTED)
+	local events = t.World.AnalyticsEvents
+	assert(#events == 1 and events[1].Name == "DevProductPurchased", `событий {#events}`)
+	assert(events[1].Player == t.Player and events[1].CustomFields.CustomField01 == "EssencePackS")
 end)
 
 return tests

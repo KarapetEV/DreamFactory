@@ -710,4 +710,27 @@ test("GuardConfig: некорректные значения роняют заг
 	})
 end)
 
+------------------------------------------------------------------------------------------
+-- Аналитика (S18)
+------------------------------------------------------------------------------------------
+
+test("PvP-атака: событие PvPRaid атакующему с украденной суммой; отказ — без события", function()
+	local t = setup()
+	local attacker = t.Join(1, 100)
+	t.Join(2, 10_000)
+	t.Join(3, 0)
+	t.RaidAt(attacker, 3) -- nothing-to-steal
+	assert(#t.World.AnalyticsEvents == 0, "отказ не логируется")
+
+	t.RaidAt(attacker, 2)
+	local stolen = t.Completed[1].Stolen
+	local raids = {}
+	for _, event in t.World.AnalyticsEvents do
+		if event.Kind == "Custom" and event.Name == "PvPRaid" then
+			table.insert(raids, event)
+		end
+	end
+	assert(#raids == 1 and raids[1].Player == attacker and raids[1].Value == stolen)
+end)
+
 return tests

@@ -455,4 +455,24 @@ test("Битый список GamePassesOwned восстанавливается
 	assert(ownedList(t) == PASS_ID and t.RefreshCalls() == 1)
 end)
 
+------------------------------------------------------------------------------------------
+-- Аналитика (S18)
+------------------------------------------------------------------------------------------
+
+test("Покупка геймпасса: GamePassPurchased после подтверждения Roblox, без подтверждения — нет", function()
+	local t = setup()
+	t.Monetization.Init()
+	t.Owns(false)
+	t.FinishPurchase(GAME_PASS_ID, false)
+	t.FinishPurchase(GAME_PASS_ID, true) -- Roblox владение не подтвердил (перепроверки впустую)
+	t.World:Advance(60)
+	assert(#t.World.AnalyticsEvents == 0, "без подтверждения не логируется")
+
+	t.Owns(true)
+	t.FinishPurchase(GAME_PASS_ID, true)
+	local events = t.World.AnalyticsEvents
+	assert(#events == 1 and events[1].Kind == "Custom" and events[1].Name == "GamePassPurchased", #events)
+	assert(events[1].Player == t.Player and events[1].CustomFields.CustomField01 == PASS_ID)
+end)
+
 return tests

@@ -408,8 +408,12 @@ test("Снимок: первый уходит сразу после загруз
 	assert(count == 4 and entry.Snapshot.Levels.CollectionRadius == 2)
 	assert(entry.Snapshot.PurchaseAck == nil)
 
+	-- Один страховочный повтор первого снимка (гонка с подпиской клиента), дальше без изменений — тишина.
 	t.World:Advance(2)
-	assert(#t.Snapshots == 1, "без изменений повторно не шлётся")
+	assert(#t.Snapshots == 2, `первый снимок + один повтор, а не {#t.Snapshots}`)
+	assert(t.Snapshots[2].Snapshot.Essence == 42, "повтор с теми же данными")
+	t.World:Advance(30)
+	assert(#t.Snapshots == 2, "без изменений больше не шлётся")
 end)
 
 test("Снимок: изменение одного Essence — не чаще SnapshotInterval", function()

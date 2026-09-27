@@ -279,6 +279,23 @@ local function sendSnapshot(player: Player, state: PlayerState, snapshot: Types.
 	Remotes.EconomySnapshot:FireClient(player, snapshot)
 end
 
+-- Немедленная отправка владельцу актуального снимка (вне расписания тика). Ошибка сборки
+-- (битый раздел профиля) изолируется и пишется в лог один раз: вызывающая транзакция
+-- к этому моменту уже выполнена.
+-- context — что за ответ собирался (для лога).
+local function pushSnapshot(player: Player, context: string, purchaseAck: string?, rebirthAck: boolean?)
+	local state = getPlayerState(player)
+	local ok, err = pcall(function()
+		local data = DataSystem.GetData(player)
+		if data then
+			sendSnapshot(player, state, buildSnapshot(data, purchaseAck, rebirthAck), os.clock())
+		end
+	end)
+	if not ok then
+		reportCorruption(player, `ошибка сборки {context}: {err}`)
+	end
+end
+
 -- Отправка снимка, если он изменился: уровни и прогресс rebirth — сразу, Essence/RawFragments — не чаще SnapshotInterval.
 local function syncSnapshot(player: Player, data: PlayerProfile, now: number)
 	local state = getPlayerState(player)
@@ -317,23 +334,16 @@ local function syncSnapshot(player: Player, data: PlayerProfile, now: number)
 
 	if dirty then
 		sendSnapshot(player, state, snapshot, now)
-	end
-end
-
--- Немедленная отправка владельцу актуального снимка (вне расписания тика). Ошибка сборки
--- (битый раздел профиля) изолируется и пишется в лог один раз: вызывающая транзакция
--- к этому моменту уже выполнена.
--- context — что за ответ собирался (для лога).
-local function pushSnapshot(player: Player, context: string, purchaseAck: string?, rebirthAck: boolean?)
-	local state = getPlayerState(player)
-	local ok, err = pcall(function()
-		local data = DataSystem.GetData(player)
-		if data then
-			sendSnapshot(player, state, buildSnapshot(data, purchaseAck, rebirthAck), os.clock())
+		if sent == nil then
+			-- Первый снимок после загрузки профиля: клиент мог не успеть подключить OnClientEvent
+			-- (RemoteEvent не ставится в очередь). Один повтор страхует старт; снимок собирается
+			-- заново, а не шлётся устаревший.
+			task.delay(FactoryConfig.InitialSnapshotResendDelay, function()
+				if player.Parent ~= nil then
+					pushSnapshot(player, "повторного первого снимка", nil, nil)
+				end
+			end)
 		end
-	end)
-	if not ok then
-		reportCorruption(player, `ошибка сборки {context}: {err}`)
 	end
 end
 

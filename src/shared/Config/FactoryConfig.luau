@@ -17,6 +17,9 @@ export type FactoryDefinition = {
 	-- Как часто, не чаще, отправлять клиенту снимок при изменении только Essence/RawFragments, секунд.
 	-- Смена уровней и ответ на покупку уходят сразу, без троттлинга.
 	SnapshotInterval: number,
+	-- Через сколько секунд после первого снимка при загрузке профиля отправить снимок ещё раз
+	-- (страховка от гонки: клиент мог не успеть подключить OnClientEvent). Один повтор, не цикл.
+	InitialSnapshotResendDelay: number,
 }
 
 local FactoryConfig: FactoryDefinition = {
@@ -27,6 +30,7 @@ local FactoryConfig: FactoryDefinition = {
 	MaxRequestsPerWindow = 5,
 	SuspiciousRejectThreshold = 15,
 	SnapshotInterval = 0.5,
+	InitialSnapshotResendDelay = 2,
 }
 
 return FactoryConfig

@@ -19,6 +19,9 @@ export type PetDefinition = {
 	MaxRequestsPerWindow: number,
 	-- Сколько отклонённых запросов в окне считается подозрительной активностью (пишется в лог).
 	SuspiciousRejectThreshold: number,
+	-- Через сколько секунд после первого снимка при загрузке профиля отправить его ещё раз
+	-- (страховка от гонки: клиент мог не успеть подключить OnClientEvent). Один повтор, не цикл.
+	InitialSnapshotResendDelay: number,
 }
 
 local PetConfig: PetDefinition = {
@@ -29,6 +32,7 @@ local PetConfig: PetDefinition = {
 	RequestWindow = 1,
 	MaxRequestsPerWindow = 5,
 	SuspiciousRejectThreshold = 15,
+	InitialSnapshotResendDelay = 2,
 }
 
 return PetConfig

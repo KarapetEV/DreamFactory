@@ -588,6 +588,15 @@ local function sendInitialSnapshot(player: Player)
 		if data and player.Parent ~= nil then
 			refreshBonuses(player, data)
 			sendSnapshot(player, true, nil, nil)
+
+			-- RemoteEvent не ставится в очередь: если клиент ещё не подключил OnClientEvent,
+			-- первый снимок пропал. Один повтор страхует старт; снимок собирается заново из
+			-- профиля (не шлётся устаревший), так что клиент получает актуальное состояние.
+			task.delay(PetConfig.InitialSnapshotResendDelay, function()
+				if player.Parent ~= nil then
+					sendSnapshot(player, true, nil, nil)
+				end
+			end)
 		end
 	end)
 end

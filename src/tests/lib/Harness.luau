@@ -142,6 +142,14 @@ function Harness.NewWorld()
 			world:_resume(co, ...)
 			return co
 		end,
+		-- task.delay: вызвать fn через seconds виртуальных секунд.
+		delay = function(seconds: number, fn: (...any) -> ...any, ...: any): thread
+			local args = table.pack(...)
+			return world.Task.spawn(function()
+				world.Task.wait(seconds)
+				fn(table.unpack(args, 1, args.n))
+			end)
+		end,
 	}
 
 	self.Store = {

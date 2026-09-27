@@ -359,7 +359,7 @@ test("Миграция v2 → v3: StorageCapacity заменяется на Stor
 	local migrated = t.DataSystem.MigrateProfileData(v2)
 
 	assert(migrated, "миграция прошла")
-	assert(migrated.Meta.SchemaVersion == 3 and t.DataSystem.CURRENT_SCHEMA_VERSION == 3)
+	assert(migrated.Meta.SchemaVersion == t.DataSystem.CURRENT_SCHEMA_VERSION, "доведено до текущей версии")
 	assert(migrated.Factory.StorageCapacity == nil, "готовое число удалено")
 	assert(migrated.Factory.StorageCapacityLevel == 0, "уровень склада = 0")
 	assert(migrated.Factory.RawFragments == 7 and migrated.Factory.ConveyorSpeedLevel == 2, "остальное сохранено")

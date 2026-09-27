@@ -1,6 +1,6 @@
 --[[
 	Тесты RebirthSystem (S9, раздел 5.4 ТЗ): порог, сброс к StartingProfileConfig,
-	исключения сброса (Decor, AutoCollectorOwned), пересчёт ClarityMultiplier/CurrentBiome,
+	исключения сброса (Decor, геймпасс авто-коллектора), пересчёт ClarityMultiplier/CurrentBiome,
 	rate limit, битый профиль, расширенный EconomySnapshot и интеграция с конвейером.
 
 	Запуск: lune run src/tests/run (из корня репозитория).
@@ -104,7 +104,7 @@ local function setup()
 			data.Factory.Decor = { "Lantern", "Clock" }
 			data.Collection.RadiusLevel = 2
 			data.Collection.SpeedLevel = 5
-			data.Collection.AutoCollectorOwned = true
+			data.Monetization.GamePassesOwned = { "AutoCollector" }
 		end,
 		Purchase = function(...)
 			handlers.PurchaseUpgrade(player, ...)
@@ -188,7 +188,7 @@ test("Порог не достигнут — отказ, профиль не м�
 	assert(snap.Player == t.Player and snap.Snapshot.RebirthAck == false, "отказ подтверждён снимком")
 end)
 
-test("Успешный rebirth: сброс к StartingProfileConfig, Decor и AutoCollectorOwned целы, Count +1", function()
+test("Успешный rebirth: сброс к StartingProfileConfig, Decor и геймпасс авто-коллектора целы, Count +1", function()
 	local t = setup()
 	t.Grind()
 	t.Perform()
@@ -204,7 +204,8 @@ test("Успешный rebirth: сброс к StartingProfileConfig, Decor и Au
 	assert(d.Collection.SpeedLevel == s.CollectionSpeedLevel)
 
 	assert(#d.Factory.Decor == 2 and d.Factory.Decor[1] == "Lantern", "Decor не тронут")
-	assert(d.Collection.AutoCollectorOwned == true, "AutoCollectorOwned не тронут")
+	assert(table.find(d.Monetization.GamePassesOwned, "AutoCollector"), "геймпасс авто-коллектора не тронут")
+	assert(d.Collection.AutoCollectorOwned == nil, "старого поля владения нет")
 
 	local snap = t.LastSnapshot().Snapshot
 	assert(snap.RebirthAck == true and snap.RebirthCount == 1 and snap.Essence == s.Essence)
@@ -219,7 +220,7 @@ test("Петы и монетизация при rebirth не сбрасываю�
 	t.Perform()
 	assert(t.Data.Rebirth.Count == 1)
 	assert(#t.Data.Pets == 1 and t.Data.Pets[1].Equipped == true)
-	assert(t.Data.Monetization.GamePassesOwned[1] == "ExtraPetSlots")
+	assert(table.find(t.Data.Monetization.GamePassesOwned, "ExtraPetSlots"))
 end)
 
 test("До порога второго биома: множитель стартовый, биом стартовый", function()

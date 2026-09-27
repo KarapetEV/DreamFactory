@@ -174,7 +174,15 @@ test("GamePassId = 0 (заглушка): Roblox не опрашивается, �
 	t.Monetization.Init()
 	assert(calls == 0, "API не вызывался")
 	assert(ownedList(t) == PASS_ID, "кэш профиля не тронут")
-	assert(warningsAbout(t, "заглушка") == 1)
+	-- По одному warn на каждый геймпасс-заглушку (в конфиге их может быть несколько).
+	local placeholders = 0
+	for _, pass in placeholder.GamePasses do
+		if pass.GamePassId == 0 then
+			placeholders += 1
+		end
+	end
+	assert(warningsAbout(t, "заглушка") == placeholders)
+	assert(warningsAbout(t, `{PASS_ID} GamePassId = 0`) == 1, "про слоты петов — ровно один")
 end)
 
 ------------------------------------------------------------------------------------------

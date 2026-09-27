@@ -38,6 +38,12 @@ local MonetizationConfig: MonetizationDefinition = {
 			-- (Creations → игра → Monetization → Passes) и впишите сюда его настоящий id.
 			GamePassId = 0,
 		},
+		{
+			Id = "AutoCollector",
+			DisplayName = "Авто-сборщик фрагментов",
+			-- ЗАГЛУШКА, как у ExtraPetSlots: настоящий id вписать перед публикацией.
+			GamePassId = 0,
+		},
 	},
 	PurchaseRecheckAttempts = 3,
 	PurchaseRecheckDelay = 2,

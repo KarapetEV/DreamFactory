@@ -37,7 +37,7 @@ local STORE_NAME = "PlayerProfiles"
 local AUTOSAVE_INTERVAL = 4 * 60
 
 -- Поднимать на 1 при любом изменении структуры PlayerProfile + добавлять миграцию ниже.
-local CURRENT_SCHEMA_VERSION = 3
+local CURRENT_SCHEMA_VERSION = 4
 
 --[[
 	MIGRATIONS[n] переводит данные со SchemaVersion n на n + 1, мутируя таблицу на месте.
@@ -51,6 +51,9 @@ local CURRENT_SCHEMA_VERSION = 3
 	ёмкость вычисляется из уровня и UpgradeConfig (M-4). До S4 покупки апгрейдов не было,
 	поэтому сохранённая ёмкость всегда равна стартовой = BaseValue уровня 0: старое поле
 	удаляем, StorageCapacityLevel = 0 дозаполнит reconcile().
+	3 → 4: удалено Collection.AutoCollectorOwned — единственный источник владения геймпассами
+	теперь Monetization.GamePassesOwned (перечитывается у Roblox). Поле нигде не выставлялось
+	в true (покупки авто-коллектора до этого не существовало), поэтому просто удаляем его.
 
 	Пример на будущее:
 	[1] = function(data)
@@ -64,6 +67,11 @@ local MIGRATIONS: { [number]: (data: any) -> () } = {
 	[2] = function(data: any)
 		if type(data.Factory) == "table" then
 			data.Factory.StorageCapacity = nil
+		end
+	end,
+	[3] = function(data: any)
+		if type(data.Collection) == "table" then
+			data.Collection.AutoCollectorOwned = nil
 		end
 	end,
 }
@@ -128,7 +136,6 @@ function DataSystem.BuildDefaultProfile(): PlayerProfile
 		Collection = {
 			RadiusLevel = start.CollectionRadiusLevel,
 			SpeedLevel = start.CollectionSpeedLevel,
-			AutoCollectorOwned = false,
 		},
 		Pets = {},
 		Rebirth = {

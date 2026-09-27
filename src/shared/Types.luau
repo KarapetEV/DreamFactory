@@ -27,7 +27,7 @@ export type PlayerProfile = {
 	Collection: {
 		RadiusLevel: number,
 		SpeedLevel: number,
-		AutoCollectorOwned: boolean,
+		-- Владение авто-коллектором — Monetization.GamePassesOwned (AutoCollectorConfig.GamePassId).
 	},
 	Pets: { PetRecord },
 	Rebirth: {

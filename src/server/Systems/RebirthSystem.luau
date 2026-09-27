@@ -15,8 +15,8 @@
 	  повторный или битый множитель в профиле не «разгоняется»);
 	- CurrentBiome — открытый биом с наибольшим порогом (пороги уникальны — BiomeConfig);
 	- сброс к StartingProfileConfig: Essence, уровни фабрики и сбора; RawFragments → 0.
-	  НЕ сбрасываются: Factory.Decor (исключение ТЗ), Collection.AutoCollectorOwned
-	  (потенциально платная фича), петы, монетизация, PvP.
+	  НЕ сбрасываются: Factory.Decor (исключение ТЗ), петы, монетизация (в т.ч. геймпасс
+	  авто-коллектора в Monetization.GamePassesOwned), PvP.
 
 	Множитель применяет FactorySystem к выходу конвейера (Rebirth.ClarityMultiplier) — здесь
 	его только пишут. Ответ клиенту — EconomySnapshot через FactorySystem.PushSnapshot с
@@ -171,7 +171,7 @@ local function tryRebirth(player: Player): string?
 		return "non-finite-result"
 	end
 
-	-- Запись одним блоком. Decor и AutoCollectorOwned не трогаем намеренно.
+	-- Запись одним блоком. Decor и Monetization не трогаем намеренно.
 	local start = StartingProfileConfig
 	currency.Essence = start.Essence
 	factory.Level = start.FactoryLevel

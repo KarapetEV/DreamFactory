@@ -10,8 +10,13 @@
 	  и UpgradeConfig (UpgradeEffects зажимает уровень в [0, MaxLevel] — эффект не растёт без предела).
 	- Радиус сбора = значение апгрейда (UpgradeEffects) × CollectionRadiusMultiplier надетых
 	  Nostalgic-петов из кэша PetSystem (без кэша — 1; на каждый запрос не пересчитывается).
-	- Сбор — одна функция без yield между проверками и записью: фрагмент забирает ровно один игрок,
-	  буфер не выходит за ёмкость склада.
+	- Сбор — одна функция без yield между проверками и записью (collectFragment): фрагмент
+	  забирает ровно один игрок, буфер не выходит за ёмкость склада.
+	- Авто-сборщик (геймпасс AutoCollectorConfig.GamePassId в Monetization.GamePassesOwned):
+	  отдельный серверный тик раз в AutoCollectorConfig.TickInterval берёт ближайший фрагмент
+	  в getCollectRadius владельца и проводит его через ту же collectFragment — те же проверки,
+	  общий с ручным сбором кулдаун. Клиент в этом пути не участвует; каждый игрок обрабатывается
+	  в своём pcall — битый профиль одного не останавливает тик для остальных.
 ]]
 
 local Players = game:GetService("Players")
@@ -22,6 +27,7 @@ local Types = require(ReplicatedStorage.shared.Types)
 local Remotes = require(ReplicatedStorage.shared.Remotes)
 local BiomeConfig = require(ReplicatedStorage.shared.Config.BiomeConfig)
 local CollectionConfig = require(ReplicatedStorage.shared.Config.CollectionConfig)
+local AutoCollectorConfig = require(ReplicatedStorage.shared.Config.AutoCollectorConfig)
 local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
 local DataSystem = require(script.Parent.DataSystem)
 local PetSystem = require(script.Parent.PetSystem)
@@ -42,6 +48,7 @@ type PlayerState = {
 	LastCollectAt: number,
 	Rejects: number,
 	RejectWindowStart: number,
+	AutoTickErrorReported: boolean, -- ошибка пассивного сбора уже записана в лог
 }
 
 local FOLDER_NAME = "DreamFragments"
@@ -70,6 +77,7 @@ local function getPlayerState(player: Player): PlayerState
 			LastCollectAt = -math.huge,
 			Rejects = 0,
 			RejectWindowStart = 0,
+			AutoTickErrorReported = false,
 		}
 		playerStates[player] = state
 	end
@@ -192,8 +200,53 @@ local function getStorageCapacity(data: PlayerProfile): number
 	return UpgradeEffects.GetEffectValue("StorageCapacity", data.Factory.StorageCapacityLevel)
 end
 
--- Единая транзакция сбора: проверки и запись без yield. Возвращает nil при успехе
--- или причину отказа (для лога; клиенту причина не отправляется).
+-- Позиция корня живого персонажа на сервере (клиентской позиции не доверяем).
+local function getRootPosition(player: Player): Vector3?
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not humanoid or humanoid.Health <= 0 or not root or not root:IsA("BasePart") then
+		return nil
+	end
+	return root.Position
+end
+
+-- Единая транзакция сбора — и для RequestCollect, и для авто-сборщика: проверки и запись
+-- без yield. Возвращает nil при успехе или причину отказа (для лога; клиенту не отправляется).
+-- Первая проверка — фрагмент всё ещё в реестре: собранный (кем угодно и каким угодно путём)
+-- фрагмент второй раз не засчитывается.
+local function collectFragment(player: Player, data: PlayerProfile, fragment: Fragment, now: number): string?
+	if fragments[fragment.Id] ~= fragment then
+		return "no-such-fragment"
+	end
+
+	local state = getPlayerState(player)
+	if now - state.LastCollectAt < getCooldown(data) then
+		return "cooldown"
+	end
+
+	local rootPosition = getRootPosition(player)
+	if not rootPosition then
+		return "no-character"
+	end
+
+	local maxDistance = getCollectRadius(player, data) + CollectionConfig.DistanceTolerance
+	if (rootPosition - fragment.Position).Magnitude > maxDistance then
+		return "too-far"
+	end
+
+	local space = getStorageCapacity(data) - data.Factory.RawFragments
+	if space <= 0 then
+		return "storage-full" -- фрагмент остаётся в мире
+	end
+
+	data.Factory.RawFragments += math.min(CollectionConfig.FragmentValue, space)
+	state.LastCollectAt = now
+	removeFragment(fragment)
+	return nil
+end
+
+-- Ручной сбор по id от клиента: разбор аргумента и поиск в реестре, дальше — collectFragment.
 local function tryCollect(player: Player, fragmentId: unknown, now: number): string?
 	if type(fragmentId) ~= "number" or fragmentId ~= fragmentId or fragmentId % 1 ~= 0 then
 		return "bad-argument"
@@ -209,32 +262,70 @@ local function tryCollect(player: Player, fragmentId: unknown, now: number): str
 		return "no-profile"
 	end
 
-	local state = getPlayerState(player)
-	if now - state.LastCollectAt < getCooldown(data) then
-		return "cooldown"
+	return collectFragment(player, data, fragment, now)
+end
+
+-- Владение авто-сборщиком — только по Monetization.GamePassesOwned; битый раздел = не владеет.
+local function ownsAutoCollector(data: PlayerProfile): boolean
+	local monetization = (data :: any).Monetization
+	if type(monetization) ~= "table" then
+		return false
+	end
+	local owned = monetization.GamePassesOwned
+	if type(owned) ~= "table" then
+		return false
+	end
+	for _, id in owned do
+		if id == AutoCollectorConfig.GamePassId then
+			return true
+		end
+	end
+	return false
+end
+
+-- Пассивный сбор одного игрока: ближайший фрагмент в радиусе → collectFragment.
+-- Один кандидат за тик: общий кулдаун всё равно пропустит не больше одного сбора,
+-- а при отказе по складу/персонажу откажут и все остальные.
+local function autoCollectFor(player: Player, now: number)
+	local data = DataSystem.GetData(player)
+	if not data or not ownsAutoCollector(data) then
+		return
 	end
 
-	local character = player.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	local root = character and character:FindFirstChild("HumanoidRootPart")
-	if not humanoid or humanoid.Health <= 0 or not root or not root:IsA("BasePart") then
-		return "no-character"
+	local rootPosition = getRootPosition(player)
+	if not rootPosition then
+		return
 	end
 
-	local maxDistance = getCollectRadius(player, data) + CollectionConfig.DistanceTolerance
-	if (root.Position - fragment.Position).Magnitude > maxDistance then
-		return "too-far"
+	local nearest: Fragment? = nil
+	local nearestDistance = getCollectRadius(player, data)
+	for _, fragment in fragments do
+		local distance = (rootPosition - fragment.Position).Magnitude
+		if distance <= nearestDistance then
+			nearest = fragment
+			nearestDistance = distance
+		end
 	end
 
-	local space = getStorageCapacity(data) - data.Factory.RawFragments
-	if space <= 0 then
-		return "storage-full" -- фрагмент остаётся в мире
+	if nearest then
+		-- Отказ здесь не подозрителен (инициатор — сервер), в registerReject не пишем.
+		collectFragment(player, data, nearest, now)
 	end
+end
 
-	data.Factory.RawFragments += math.min(CollectionConfig.FragmentValue, space)
-	state.LastCollectAt = now
-	removeFragment(fragment)
-	return nil
+local function autoCollectTick()
+	local now = os.clock()
+	for _, player in Players:GetPlayers() do
+		local ok, err = pcall(autoCollectFor, player, now)
+		if not ok then
+			-- Состояние вышедшего игрока (Parent = nil) не воскрешаем — иначе утечка в playerStates.
+			local state = if player.Parent then getPlayerState(player) else nil
+			if state and not state.AutoTickErrorReported then
+				state.AutoTickErrorReported = true
+				warn(`[CollectionSystem] Ошибка авто-сборщика у {player.Name} ({player.UserId}): {err}`)
+			end
+		end
+	end
 end
 
 local function onRequestCollect(player: Player, fragmentId: unknown)
@@ -272,6 +363,16 @@ function CollectionSystem.Init()
 		while true do
 			spawnTick(folder)
 			task.wait(CollectionConfig.SpawnInterval)
+		end
+	end)
+
+	task.spawn(function()
+		while true do
+			task.wait(AutoCollectorConfig.TickInterval)
+			local ok, err = pcall(autoCollectTick)
+			if not ok then
+				warn(`[CollectionSystem] Ошибка тика авто-сборщика: {err}`)
+			end
 		end
 	end)
 end

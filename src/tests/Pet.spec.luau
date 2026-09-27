@@ -262,6 +262,35 @@ test("HatchCocoon списывает цену из CocoonConfig и добавл�
 	assert(#snap.Snapshot.Pets == 2)
 end)
 
+test("PetSnapshot.CocoonOdds приходит только с полным списком петов, текст 1-в-1 с MonetizationSystem.GetCocoonOddsText", function()
+	local t = setup()
+	local monetization = t.World:LoadModule("src/server/Systems/MonetizationSystem", {
+		["src/server/Systems/DataSystem"] = {},
+		["src/server/Systems/FactorySystem"] = {},
+		["src/server/Systems/PetSystem"] = {},
+	})
+
+	t.Data.Currency.Essence = t.Cocoons.DrowsyCocoon.Price
+	t.Hatch("DrowsyCocoon")
+	local snapshot = t.LastSnapshot().Snapshot
+	assert(type(snapshot.CocoonOdds) == "table", "полный снимок несёт текст шансов")
+	local count = 0
+	for cocoonId in t.Cocoons do
+		count += 1
+		assert(
+			snapshot.CocoonOdds[cocoonId] == monetization.GetCocoonOddsText(cocoonId),
+			`{cocoonId}: текст в PetSnapshot разошёлся с MonetizationSystem.GetCocoonOddsText`
+		)
+	end
+	assert(count > 0)
+
+	-- Отказ без списка петов (например, чужой/несуществующий Id в EquipPet) — снимок без Pets,
+	-- статичный текст шансов повторно не шлём.
+	t.Equip("no-such-pet-id")
+	local ackOnly = t.LastSnapshot().Snapshot
+	assert(ackOnly.Pets == nil and ackOnly.CocoonOdds == nil, "снимок-отказ без Pets — без CocoonOdds")
+end)
+
 test("HatchCocoon отклоняется при нехватке Essence", function()
 	local t = setup()
 	t.Data.Currency.Essence = t.Cocoons.DrowsyCocoon.Price - 1

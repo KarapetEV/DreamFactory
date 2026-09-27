@@ -90,6 +90,46 @@ test("текст пересчитывается при изменении вес
 	)
 end)
 
+test("CocoonConfig и PetRarityConfig.Cocoons — 1-в-1: рассинхрон в любую сторону падает при загрузке", function()
+	local world = Harness.NewWorld()
+	local realCocoons = world:LoadModule("src/shared/Config/CocoonConfig")
+
+	-- Лишний кокон в CocoonConfig, для которого нет шансов в PetRarityConfig — молчать нельзя,
+	-- иначе игрок нажмёт Hatch на кокон без ролла.
+	local withExtra = Harness.DeepCopy(realCocoons)
+	withExtra.GhostCocoon = { Id = "GhostCocoon", DisplayName = "Кокон-призрак", Price = 1, SortOrder = 99 }
+	local ok1 = pcall(function()
+		world:LoadModule("src/server/Config/PetRarityConfig", {
+			["src/shared/Config/CocoonConfig"] = withExtra,
+		})
+	end)
+	assert(not ok1, "кокон без записи шансов должен ронять загрузку, а не тихо остаться без Hatch")
+
+	-- Кокон убран из CocoonConfig, но шансы под его id остались в PetRarityConfig.Cocoons —
+	-- тоже рассинхрон (в PetInventoryUI кокон исчез бы, а сервер продолжал бы валидировать мёртвый id).
+	local withoutOne = Harness.DeepCopy(realCocoons)
+	withoutOne.LucidCocoon = nil
+	local ok2 = pcall(function()
+		world:LoadModule("src/server/Config/PetRarityConfig", {
+			["src/shared/Config/CocoonConfig"] = withoutOne,
+		})
+	end)
+	assert(not ok2, "лишние шансы без кокона в CocoonConfig должны ронять загрузку")
+end)
+
+test("редкость без RarityDisplayNames — GetCocoonOddsText падает явно, а не отдаёт сырой Id или nil", function()
+	local world = Harness.NewWorld()
+	local species = Harness.DeepCopy(world:LoadModule("src/shared/Config/PetSpeciesConfig"))
+	species.RarityDisplayNames.Common = nil -- Common участвует в DrowsyCocoon
+	local monetization = world:LoadModule("src/server/Systems/MonetizationSystem", {
+		["src/server/Systems/DataSystem"] = {},
+		["src/server/Systems/FactorySystem"] = {},
+		["src/server/Systems/PetSystem"] = {},
+		["src/shared/Config/PetSpeciesConfig"] = species,
+	})
+	assert(not pcall(monetization.GetCocoonOddsText, "DrowsyCocoon"), "без DisplayName — явная ошибка")
+end)
+
 test("каждый кокон: проценты в тексте совпадают с Chance ролла 1-в-1", function()
 	local world = Harness.NewWorld()
 	local rarity = world:LoadModule("src/server/Config/PetRarityConfig")

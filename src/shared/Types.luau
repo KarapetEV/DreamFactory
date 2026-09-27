@@ -111,6 +111,10 @@ export type PetSnapshot = {
 	Ack: string?,
 	-- Id только что вылупившегося пета (ответ на успешный HatchCocoon).
 	HatchedPetId: string?,
+	-- Публикуемый текст шансов редкости по каждому кокону (раздел 5.7 ТЗ, GDD раздел 12):
+	-- ключ — CocoonConfig.Id, значение — OddsText.Format от server-only PetRarityConfig.
+	-- Присутствует только когда есть Pets (полный снимок); статичен, PetInventoryUI кэширует.
+	CocoonOdds: { [string]: string }?,
 }
 
 -- Итог ивента Хаос-босса для конкретного игрока (поле ChaosSnapshot.Ended).

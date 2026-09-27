@@ -41,6 +41,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Types = require(ReplicatedStorage.shared.Types)
 local Remotes = require(ReplicatedStorage.shared.Remotes)
 local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
+local OddsText = require(ReplicatedStorage.shared.OddsText)
 local CocoonConfig = require(ReplicatedStorage.shared.Config.CocoonConfig)
 local PetConfig = require(ReplicatedStorage.shared.Config.PetConfig)
 local PetSpeciesConfig = require(ReplicatedStorage.shared.Config.PetSpeciesConfig)
@@ -85,6 +86,16 @@ end
 for _, field in { "BaseEquipSlots", "ExtraEquipSlots", "MaxInventory", "MaxRequestsPerWindow" } do
 	local value = (PetConfig :: any)[field]
 	assert(isFinite(value) and value >= 0 and value % 1 == 0, `PetConfig: некорректный {field}`)
+end
+
+-- Публикуемый текст шансов кокона (раздел 5.7 ТЗ, GDD раздел 12) — считается один раз здесь,
+-- а не через MonetizationSystem.GetCocoonOddsText: MonetizationSystem уже требует PetSystem
+-- (RefreshBonuses при смене владения геймпассом), обратный require дал бы циклическую
+-- зависимость. Источник тот же самый PetRarityConfig, что и у ролла (см. цикл выше), поэтому
+-- текст не может разойтись с шансами.
+local cocoonOddsText: { [string]: string } = {}
+for cocoonId in CocoonConfig do
+	cocoonOddsText[cocoonId] = OddsText.Format(PetRarityConfig.Cocoons[cocoonId], PetSpeciesConfig.RarityDisplayNames)
 end
 
 local PetSystem = {}
@@ -527,6 +538,9 @@ local function buildSnapshot(
 		EquipSlots = PetSystem.GetEquipSlots(data),
 		Ack = ack,
 		HatchedPetId = hatchedPetId,
+		-- Статичный текст шансов шлём только вместе с полным списком петов — не на каждый
+		-- Equip/Unequip-ответ, где Pets не запрашивался.
+		CocoonOdds = if withPets then cocoonOddsText else nil,
 	}
 end
 

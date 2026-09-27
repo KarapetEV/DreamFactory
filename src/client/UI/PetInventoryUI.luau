@@ -74,7 +74,7 @@ local slotsLabel: TextLabel
 local statusLabel: TextLabel
 local listFrame: ScrollingFrame
 local emptyLabel: TextLabel
-local hatchButtons: { { Cocoon: CocoonDefinition, Button: TextButton } } = {}
+local hatchButtons: { { Cocoon: CocoonDefinition, Button: TextButton, OddsLabel: TextLabel } } = {}
 local rows: { Row } = {}
 
 -- Последний полученный список петов и лимит слотов (только из снимков сервера).
@@ -82,6 +82,9 @@ local pets: { PetRecord } = {}
 local equipSlots = PetConfig.BaseEquipSlots
 local pendingSince: number? = nil
 local statusToken = 0
+-- Публикуемый текст шансов кокона (Types.PetSnapshot.CocoonOdds), раздел 12 ТЗ: должен
+-- совпадать 1-в-1 с шансами ролла. Статичен — приходит от сервера, сам не считается.
+local cocoonOdds: { [string]: string } = {}
 
 local function makeLabel(parent: Instance, text: string, size: UDim2, position: UDim2): TextLabel
 	local label = Instance.new("TextLabel")
@@ -256,6 +259,34 @@ local function rebuildList()
 	refreshButtons()
 end
 
+-- Метки шансов не зависят от pending/essence — обновляются только когда сервер прислал текст.
+local function refreshOddsLabels()
+	for _, entry in hatchButtons do
+		local text = cocoonOdds[entry.Cocoon.Id]
+		if text then
+			entry.OddsLabel.Text = text
+		end
+	end
+end
+
+-- CocoonOdds — необязательное дополнение к снимку; битую форму просто игнорируем, не роняя
+-- остальной (более важный) снимок петов из-за косметического текста.
+local function applyCocoonOdds(value: unknown)
+	if type(value) ~= "table" then
+		return
+	end
+	local changed = false
+	for cocoonId, text in value :: { [unknown]: unknown } do
+		if type(cocoonId) == "string" and type(text) == "string" and CocoonConfig[cocoonId] then
+			cocoonOdds[cocoonId] = text
+			changed = true
+		end
+	end
+	if changed then
+		refreshOddsLabels()
+	end
+end
+
 local function findPet(petId: string): PetRecord?
 	for _, pet in pets do
 		if pet.Id == petId then
@@ -297,6 +328,7 @@ local function onPetSnapshot(value: unknown)
 	if snapshot.Pets then
 		pets = snapshot.Pets
 	end
+	applyCocoonOdds(snapshot.CocoonOdds)
 
 	if snapshot.Ack ~= nil then
 		pendingSince = nil
@@ -325,7 +357,7 @@ local function build(): ScreenGui
 	screen.Enabled = false
 
 	local panel = Instance.new("Frame")
-	panel.Size = UDim2.fromOffset(460, 400)
+	panel.Size = UDim2.fromOffset(460, 430)
 	panel.AnchorPoint = Vector2.new(0.5, 0.5)
 	panel.Position = UDim2.fromScale(0.5, 0.5)
 	panel.BackgroundColor3 = COLOR_PANEL
@@ -362,12 +394,26 @@ local function build(): ScreenGui
 		button.Activated:Connect(function()
 			send(Remotes.HatchCocoon, cocoonId)
 		end)
-		table.insert(hatchButtons, { Cocoon = cocoon, Button = button })
+
+		-- Текст шансов (раздел 12 ТЗ): статичен, приходит от сервера в PetSnapshot.CocoonOdds;
+		-- до первого снимка пусто, а не выдуманные проценты на клиенте.
+		local oddsLabel = makeLabel(
+			panel,
+			"",
+			UDim2.fromOffset(buttonWidth, 26),
+			UDim2.fromOffset(8 + (index - 1) * (buttonWidth + gap), 110)
+		)
+		oddsLabel.TextScaled = false
+		oddsLabel.TextSize = 12
+		oddsLabel.TextWrapped = true
+		oddsLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
+
+		table.insert(hatchButtons, { Cocoon = cocoon, Button = button, OddsLabel = oddsLabel })
 	end
 
 	listFrame = Instance.new("ScrollingFrame")
 	listFrame.Size = UDim2.fromOffset(444, 240)
-	listFrame.Position = UDim2.fromOffset(8, 116)
+	listFrame.Position = UDim2.fromOffset(8, 142)
 	listFrame.BackgroundTransparency = 1
 	listFrame.BorderSizePixel = 0
 	listFrame.ScrollBarThickness = 6
@@ -379,10 +425,10 @@ local function build(): ScreenGui
 	layout.Padding = UDim.new(0, 4)
 	layout.Parent = listFrame
 
-	emptyLabel = makeLabel(panel, TEXT.Empty, UDim2.fromOffset(440, 28), UDim2.fromOffset(8, 130))
+	emptyLabel = makeLabel(panel, TEXT.Empty, UDim2.fromOffset(440, 28), UDim2.fromOffset(8, 156))
 	emptyLabel.TextXAlignment = Enum.TextXAlignment.Center
 
-	statusLabel = makeLabel(panel, "", UDim2.fromOffset(440, 24), UDim2.fromOffset(8, 366))
+	statusLabel = makeLabel(panel, "", UDim2.fromOffset(440, 24), UDim2.fromOffset(8, 392))
 	statusLabel.TextXAlignment = Enum.TextXAlignment.Center
 
 	return screen

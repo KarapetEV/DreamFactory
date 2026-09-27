@@ -465,6 +465,20 @@ test("битые квитанции и неизвестный ProductId не р�
 	assert(t.Data.Currency.Essence == t.StartEssence + t.Config.Products[4].Reward.Amount)
 end)
 
+test("PurchaseId ровно на границе длины ключа DataStore (50 симв.) выдаётся; на 1 больше — нет", function()
+	local t = setup()
+	-- Ключ лога — RECEIPT_KEY_PREFIX ("Receipt_", 8 симв.) .. PurchaseId, лимит ключа DataStore 50.
+	local maxId = string.rep("a", 42)
+	assert(t.Server.Receipt(receipt(42, maxId)) == GRANTED, "ровно на границе — выдача, не отказ по длине")
+	assert(t.Data.Currency.Essence == t.StartEssence + t.Amount)
+	assert(logRecord(t.World, maxId), "лог записан ровно на границе")
+
+	local overId = string.rep("b", 43)
+	assert(t.Server.Receipt(receipt(42, overId)) == NOT_YET, "на 1 больше границы — отклонено")
+	assert(t.Data.Currency.Essence == t.StartEssence + t.Amount, "за отклонённую квитанцию ничего не выдано")
+	assert(logRecord(t.World, overId) == nil)
+end)
+
 test("реальный конфиг (ProductId = 0): любая квитанция — NotProcessedYet, не выдача", function()
 	local world = Harness.NewWorld()
 	local server = newServer(world, world:LoadModule("src/shared/Config/DevProductConfig"))

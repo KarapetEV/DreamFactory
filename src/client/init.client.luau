@@ -7,4 +7,5 @@ local UI = script.UI
 local HUD = require(UI.HUD)
 HUD.Init()
 require(UI.ShopUI).Init(HUD)
+require(UI.PetInventoryUI).Init(HUD)
 require(Controllers.CollectionController).Init()

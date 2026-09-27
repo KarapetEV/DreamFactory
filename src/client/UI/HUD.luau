@@ -24,12 +24,17 @@ local Remotes = require(ReplicatedStorage.shared.Remotes)
 local Signal = require(ReplicatedStorage.shared.Signal)
 local UpgradeConfig = require(ReplicatedStorage.shared.Config.UpgradeConfig)
 local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
+local BiomeConfig = require(ReplicatedStorage.shared.Config.BiomeConfig)
+local RebirthConfig = require(ReplicatedStorage.shared.Config.RebirthConfig)
 
 type EconomySnapshot = Types.EconomySnapshot
 
 -- Сколько ждать ответа на покупку, прежде чем разблокировать кнопку (ответ мог не прийти,
 -- например запрос отброшен rate limit'ом сервера).
 local PENDING_TIMEOUT = 3
+-- То же для PerformRebirth и время показа реакции на RebirthAck.
+local REBIRTH_PENDING_TIMEOUT = 3
+local REBIRTH_RESULT_SECONDS = 2.5
 
 -- Порядок строк и подписи значений эффектов. Строки UI пока здесь; в таблицу локализации
 -- (раздел 10 ТЗ) переедут вместе с остальным UI.
@@ -42,6 +47,12 @@ local VALUE_FORMATS: { [string]: string } = {
 }
 local TEXT = {
 	EssenceLabel = "Essence: %s",
+	BiomeLabel = "Биом: %s",
+	ClarityLabel = "Ясность: ×%.2f · Перерождений: %d",
+	RebirthProgress = "%s / %s",
+	RebirthButton = "Перерождение",
+	RebirthDone = "Перерождение выполнено!",
+	RebirthDenied = "Перерождение отклонено",
 	FragmentsLabel = "Фрагменты: %s / %s",
 	Waiting = "Загрузка...",
 	Buy = "Купить: %.0f",
@@ -74,6 +85,16 @@ local menuButtonCount = 0
 local essenceLabel: TextLabel
 local fragmentsLabel: TextLabel
 local rows: { [string]: Row } = {}
+
+-- Блок Rebirth (левый нижний угол): биом/множитель из снимка, прогресс Essence → MinEssence.
+local biomeLabel: TextLabel
+local clarityLabel: TextLabel
+local rebirthBarFill: Frame
+local rebirthBarLabel: TextLabel
+local rebirthButton: TextButton
+local rebirthResultLabel: TextLabel
+local rebirthPendingSince: number? = nil -- os.clock() отправки PerformRebirth, пока ждём ответа
+local rebirthResultToken = 0 -- сбрасывает устаревший таймер скрытия реакции
 
 local function formatValue(id: string, value: number): string
 	return string.format(VALUE_FORMATS[id] or "%.2f", value)
@@ -136,6 +157,42 @@ local function refreshRow(row: Row)
 	row.Button.BackgroundColor3 = if enabled then BUTTON_ENABLED else BUTTON_DISABLED
 end
 
+-- Всё в блоке — из подтверждённого снимка и RebirthConfig. Неактивность кнопки ниже порога и
+-- во время запроса — не только UX: закрывает M-4 (отказы below-threshold копились бы в
+-- счётчике подозрительной активности сервера). Сервер всё равно перепроверяет порог сам.
+local function refreshRebirth()
+	local essence = if snapshot and UpgradeEffects.IsFinite(snapshot.Essence) then snapshot.Essence else nil
+	local minEssence = RebirthConfig.MinEssence
+
+	if snapshot then
+		local biomeId = snapshot.CurrentBiome
+		local biome = BiomeConfig[biomeId]
+		biomeLabel.Text = string.format(TEXT.BiomeLabel, if biome then biome.DisplayName else biomeId)
+		clarityLabel.Text = string.format(
+			TEXT.ClarityLabel,
+			if UpgradeEffects.IsFinite(snapshot.ClarityMultiplier) then snapshot.ClarityMultiplier else 1,
+			if UpgradeEffects.IsFinite(snapshot.RebirthCount) then snapshot.RebirthCount else 0
+		)
+	else
+		biomeLabel.Text = string.format(TEXT.BiomeLabel, "-")
+		clarityLabel.Text = TEXT.Waiting
+	end
+
+	local fraction = if essence then math.clamp(essence / minEssence, 0, 1) else 0
+	rebirthBarFill.Size = UDim2.fromScale(fraction, 1)
+	rebirthBarLabel.Text = string.format(
+		TEXT.RebirthProgress,
+		if essence then string.format("%.0f", math.floor(essence)) else "?",
+		string.format("%.0f", minEssence)
+	)
+
+	local enabled = essence ~= nil and essence >= minEssence and rebirthPendingSince == nil
+	rebirthButton.Text = if rebirthPendingSince then TEXT.Pending else TEXT.RebirthButton
+	rebirthButton.Active = enabled
+	rebirthButton.AutoButtonColor = enabled
+	rebirthButton.BackgroundColor3 = if enabled then BUTTON_ENABLED else BUTTON_DISABLED
+end
+
 local function refreshAll()
 	local essence = if snapshot and UpgradeEffects.IsFinite(snapshot.Essence)
 		then string.format("%.0f", math.floor(snapshot.Essence))
@@ -154,6 +211,7 @@ local function refreshAll()
 	for _, row in rows do
 		refreshRow(row)
 	end
+	refreshRebirth()
 end
 
 local function onPurchaseClicked(row: Row)
@@ -186,6 +244,44 @@ local function onPurchaseClicked(row: Row)
 	end)
 end
 
+-- Клик по Rebirth: только intent без аргументов. Порог и всё остальное решает сервер.
+local function onRebirthClicked()
+	if
+		rebirthPendingSince
+		or not snapshot
+		or not UpgradeEffects.IsFinite(snapshot.Essence)
+		or snapshot.Essence < RebirthConfig.MinEssence
+	then
+		return
+	end
+
+	rebirthPendingSince = os.clock()
+	refreshRebirth()
+	Remotes.PerformRebirth:FireServer()
+
+	-- Страховка на случай, если ответ не придёт (запрос отброшен rate limit'ом сервера).
+	local sentAt = rebirthPendingSince
+	task.delay(REBIRTH_PENDING_TIMEOUT, function()
+		if rebirthPendingSince == sentAt then
+			rebirthPendingSince = nil
+			refreshRebirth()
+		end
+	end)
+end
+
+-- Краткая реакция на RebirthAck; состояния поверх присланного нет — только таймер скрытия.
+local function showRebirthResult(success: boolean)
+	rebirthResultToken += 1
+	local token = rebirthResultToken
+	rebirthResultLabel.Text = if success then TEXT.RebirthDone else TEXT.RebirthDenied
+	rebirthResultLabel.TextColor3 = if success then Color3.fromRGB(140, 230, 150) else Color3.fromRGB(240, 130, 130)
+	task.delay(REBIRTH_RESULT_SECONDS, function()
+		if rebirthResultToken == token then
+			rebirthResultLabel.Text = ""
+		end
+	end)
+end
+
 -- Снимок приходит от сервера, но форму всё равно проверяем: битый снимок не должен ронять UI.
 local function isValidSnapshot(value: unknown): boolean
 	if type(value) ~= "table" then
@@ -208,6 +304,11 @@ local function onSnapshot(value: unknown)
 	local ack = newSnapshot.PurchaseAck
 	if ack and rows[ack] then
 		rows[ack].PendingSince = nil
+	end
+	local rebirthAck = newSnapshot.RebirthAck
+	if type(rebirthAck) == "boolean" then
+		rebirthPendingSince = nil
+		showRebirthResult(rebirthAck)
 	end
 	refreshAll()
 end
@@ -264,6 +365,42 @@ local function build(): ScreenGui
 			onPurchaseClicked(row)
 		end)
 	end
+
+	-- Блок Rebirth — левый нижний угол: CoreGui его не занимает (как и правый нижний).
+	local rebirthPanel = Instance.new("Frame")
+	rebirthPanel.Size = UDim2.fromOffset(260, 158)
+	rebirthPanel.AnchorPoint = Vector2.new(0, 1)
+	rebirthPanel.Position = UDim2.new(0, 12, 1, -12)
+	rebirthPanel.BackgroundColor3 = Color3.fromRGB(30, 25, 50)
+	rebirthPanel.BackgroundTransparency = 0.25
+	rebirthPanel.Parent = gui
+
+	biomeLabel = makeLabel(rebirthPanel, "", UDim2.new(1, -16, 0, 24), UDim2.fromOffset(8, 6))
+	clarityLabel = makeLabel(rebirthPanel, "", UDim2.new(1, -16, 0, 22), UDim2.fromOffset(8, 32))
+
+	local bar = Instance.new("Frame")
+	bar.Size = UDim2.new(1, -16, 0, 22)
+	bar.Position = UDim2.fromOffset(8, 60)
+	bar.BackgroundColor3 = Color3.fromRGB(60, 50, 90)
+	bar.Parent = rebirthPanel
+	rebirthBarFill = Instance.new("Frame")
+	rebirthBarFill.Size = UDim2.fromScale(0, 1)
+	rebirthBarFill.BackgroundColor3 = Color3.fromRGB(150, 110, 230)
+	rebirthBarFill.BorderSizePixel = 0
+	rebirthBarFill.Parent = bar
+	rebirthBarLabel = makeLabel(bar, "", UDim2.fromScale(1, 1), UDim2.fromOffset(0, 0))
+	rebirthBarLabel.TextXAlignment = Enum.TextXAlignment.Center
+
+	rebirthButton = Instance.new("TextButton")
+	rebirthButton.Size = UDim2.new(1, -16, 0, 36)
+	rebirthButton.Position = UDim2.fromOffset(8, 90)
+	rebirthButton.TextColor3 = Color3.new(1, 1, 1)
+	rebirthButton.TextScaled = true
+	rebirthButton.Parent = rebirthPanel
+	rebirthButton.Activated:Connect(onRebirthClicked)
+
+	rebirthResultLabel = makeLabel(rebirthPanel, "", UDim2.new(1, -16, 0, 22), UDim2.fromOffset(8, 130))
+	rebirthResultLabel.TextXAlignment = Enum.TextXAlignment.Center
 
 	return gui
 end

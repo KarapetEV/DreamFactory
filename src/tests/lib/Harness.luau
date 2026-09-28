@@ -93,7 +93,7 @@ end
 local World = {}
 World.__index = World
 
-export type Player = { UserId: number, Name: string, Parent: any }
+export type Player = { UserId: number, Name: string, Parent: any, CharacterAdded: any, Character: any }
 
 function Harness.NewWorld()
 	local self = setmetatable({}, World)
@@ -168,6 +168,10 @@ function Harness.NewWorld()
 				fn(table.unpack(args, 1, args.n))
 			end)
 		end,
+		-- task.defer: fn выполнится при следующей прокрутке времени (Advance/RunUntil), без сдвига часов.
+		defer = function(fn: (...any) -> ...any, ...: any): thread
+			return world.Task.delay(0, fn, ...)
+		end,
 	}
 
 	local function maybeFail(op: string, key: string)
@@ -239,7 +243,65 @@ function World:Advance(duration: number)
 end
 
 function World:NewPlayer(userId: number?): Player
-	return { UserId = userId or 42, Name = "TestPlayer", Parent = true }
+	local handlers = {}
+	return {
+		UserId = userId or 42,
+		Name = "TestPlayer",
+		Parent = true,
+		Character = nil,
+		-- Подписчики Player.CharacterAdded: событие срабатывает только через world:SpawnCharacter.
+		CharacterAdded = {
+			_handlers = handlers,
+			Connect = function(_self: any, fn: (any) -> ())
+				table.insert(handlers, fn)
+				local connection = { Connected = true }
+				function connection.Disconnect(conn)
+					conn.Connected = false
+					local index = table.find(handlers, fn)
+					if index then
+						table.remove(handlers, index)
+					end
+				end
+				return connection
+			end,
+		},
+	}
+end
+
+-- Персонаж-заглушка с корнем в position и живым Humanoid (серверные проверки дистанции
+-- читают HumanoidRootPart.Position). Возвращает (character, root, humanoid): тест двигает
+-- персонажа, меняя root.Position, и «убивает», выставляя humanoid.Health = 0. InWorkspace
+-- (по умолчанию true) — ответ IsDescendantOf: false имитирует персонажа до вставки в Workspace.
+function World:NewCharacter(position: any): (any, any, any)
+	local root = {
+		Position = position,
+		IsA = function(_self, name)
+			return name == "BasePart"
+		end,
+	}
+	local humanoid = { Health = 100 }
+	local character = {
+		InWorkspace = true,
+		IsDescendantOf = function(self, _ancestor)
+			return self.InWorkspace
+		end,
+		FindFirstChildOfClass = function(_self, className)
+			return if className == "Humanoid" then humanoid else nil
+		end,
+		FindFirstChild = function(_self, name)
+			return if name == "HumanoidRootPart" then root else nil
+		end,
+	}
+	return character, root, humanoid
+end
+
+-- Спавн персонажа сервером, как Player:LoadCharacter: Player.Character меняется, затем
+-- подписчики CharacterAdded (каждый в своей корутине).
+function World:SpawnCharacter(player: any, character: any)
+	player.Character = character
+	for _, fn in table.clone(player.CharacterAdded._handlers) do
+		self.Task.spawn(fn, character)
+	end
 end
 
 -- Вызвать подписчиков Players.PlayerAdded / PlayerRemoving (каждый — в своей корутине, как в игре).

@@ -124,7 +124,10 @@ local function setup(patches: { PvP: { [string]: any }?, Guard: { [string]: any 
 		return player, data
 	end
 
-	-- Персонаж player в offset studs (по X) от рейд-инстанса цели targetId.
+	local roots = {}
+
+	-- Новый персонаж player в offset studs (по X) от рейд-инстанса цели targetId (для
+	-- MovementGuard — спавн, не скачок).
 	function t.PlaceAt(player, targetId: number, offset: number?)
 		local center = assert(system.GetRaidInstancePosition(targetId), `нет рейд-инстанса у {targetId}`)
 		local shift = center - center
@@ -144,6 +147,15 @@ local function setup(patches: { PvP: { [string]: any }?, Guard: { [string]: any 
 				return if name == "HumanoidRootPart" then root else nil
 			end,
 		}
+		roots[player] = root
+	end
+
+	-- Тот же персонаж мгновенно оказывается в offset studs от инстанса цели (сдвиг root.Position).
+	function t.MoveTo(player, targetId: number, offset: number?)
+		local center = assert(system.GetRaidInstancePosition(targetId), `нет рейд-инстанса у {targetId}`)
+		local shift = center - center
+		shift.X = offset or 0
+		roots[player].Position = center + shift
 	end
 
 	function t.Raid(attacker, targetId: any, ...)
@@ -623,6 +635,28 @@ test("Атакующий должен стоять у рейд-инстанса 
 	t.PlaceAt(attacker, 2, c.RaidRange + c.DistanceTolerance - 0.5)
 	t.Raid(attacker, 2)
 	assert(#t.Completed == 1, "в пределах допуска")
+end)
+
+test("Телепорт к рейд-инстансу не проходит проверку дистанции (MovementGuard); подход пешком — проходит", function()
+	local t = setup()
+	local c = t.Config
+	local attacker = t.Join(1, 0)
+	local _, targetData = t.Join(2, 10_000)
+
+	t.PlaceAt(attacker, 2, 300)
+	t.Raid(attacker, 2) -- далеко: отказ, базовая точка доверенной позиции — здесь
+	assert(#t.Completed == 0)
+
+	t.World:Advance(c.RequestWindow + 0.01)
+	t.MoveTo(attacker, 2) -- тот же персонаж мгновенно у инстанса (раньше рейд проходил)
+	t.Raid(attacker, 2)
+	assert(#t.Completed == 0, "телепорт не засчитан")
+	assert(targetData.Currency.Essence == 10_000, "Essence цели не тронута")
+
+	-- Столько времени, сколько нужно, чтобы дойти пешком (WalkSpeed 16).
+	t.World:Advance(300 / 16)
+	t.Raid(attacker, 2)
+	assert(#t.Completed == 1, "после подхода рейд прошёл")
 end)
 
 test("Rate limit: лишние запросы в окне отбрасываются до транзакции", function()

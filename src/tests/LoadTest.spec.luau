@@ -7,7 +7,8 @@
 	  BattlePass, Monetization) подняты вместе, как в init.server, с общим кэшем модулей;
 	- PLAYERS фейковых игроков одновременно проходят полный цикл: сбор → конвейер → апгрейд →
 	  PvP-рейд → удар по Хаос-боссу → вылупление → XP пропуска → rebirth — без ошибок и
-	  предупреждений, за разумное реальное время;
+	  предупреждений, за разумное реальное время. MovementGuard запущен, как в init.server:
+	  к фрагментам, рейд-инстансам и боссу игроки идут пешком со скоростью ниже потолка;
 	- после выхода всех игроков ни один модуль не держит ссылку на Player (сквозная проверка
 	  утечек по всем per-player таблицам сразу): объекты игроков собираются GC.
 
@@ -55,23 +56,11 @@ local REMOTE_NAMES = {
 	"RequestRaidStart",
 }
 
--- Персонаж-заглушка с перемещаемым корнем (серверные проверки дистанции читают root.Position).
+-- Спавн персонажа-заглушки в начале координат; возвращает перемещаемый корень
+-- (MovementGuard читает root.Position).
 local function giveCharacter(world, player)
-	local root = {
-		Position = world.Vector3(0, 0, 0),
-		IsA = function(_self, name)
-			return name == "BasePart"
-		end,
-	}
-	local humanoid = { Health = 100 }
-	player.Character = {
-		FindFirstChildOfClass = function(_self, className)
-			return if className == "Humanoid" then humanoid else nil
-		end,
-		FindFirstChild = function(_self, name)
-			return if name == "HumanoidRootPart" then root else nil
-		end,
-	}
+	local character, root = world:NewCharacter(world.Vector3(0, 0, 0))
+	world:SpawnCharacter(player, character)
 	return root
 end
 
@@ -105,13 +94,15 @@ local function buildServer(world)
 	for _, name in SYSTEMS do
 		systems[name] = load(`src/server/Systems/{name}`)
 	end
+	local movementGuard = load("src/server/Services/MovementGuard")
 	world:Spawn(function()
+		movementGuard.Init()
 		for _, name in SYSTEMS do
 			systems[name].Init()
 		end
 	end)
 	world:Advance(1)
-	return systems, handlers, chaosConfig, function()
+	return systems, handlers, chaosConfig, load("src/server/Config/MovementGuardConfig"), function()
 		return fired
 	end
 end
@@ -119,7 +110,7 @@ end
 test(`Scale: {PLAYERS} игроков проходят полный цикл всех систем без ошибок, без утечек Player`, function()
 	local startedAt = os.clock()
 	local world = Harness.NewWorld()
-	local systems, handlers, chaosConfig, firedCount = buildServer(world)
+	local systems, handlers, chaosConfig, guardConfig, firedCount = buildServer(world)
 	local S = systems
 	-- При Init системы честно предупреждают о заглушках id (GamePassId/ProductId = 0) — это
 	-- ожидаемо; дальше новых предупреждений быть не должно.
@@ -141,13 +132,41 @@ test(`Scale: {PLAYERS} игроков проходят полный цикл в�
 
 	-- Вход игроков.
 	local players, roots = {}, {}
+
+	-- Все игроки из targets (id -> точка) одновременно идут по прямой к своим точкам на 90%
+	-- горизонтального потолка MovementGuard; время мира идёт, фоновый замер работает.
+	local function walkTo(targets: { [number]: any })
+		local step = 0.25
+		local speed = guardConfig.MaxHorizontalSpeed * 0.9
+		local starts, longest = {}, 0
+		for id, target in targets do
+			starts[id] = roots[id].Position
+			longest = math.max(longest, (target - starts[id]).Magnitude)
+		end
+		local duration = longest / speed
+		local elapsed = 0
+		while elapsed < duration do
+			elapsed = math.min(elapsed + step, duration)
+			for id, target in targets do
+				local from = starts[id]
+				local k = math.min(1, elapsed * speed / math.max((target - from).Magnitude, 1e-9))
+				roots[id].Position = world.Vector3(
+					from.X + (target.X - from.X) * k,
+					from.Y + (target.Y - from.Y) * k,
+					from.Z + (target.Z - from.Z) * k
+				)
+			end
+			world:Advance(step)
+		end
+	end
+
 	for id = 1, PLAYERS do
 		local player = world:NewPlayer(id)
 		player.Name = `LoadPlayer{id}`
 		players[id] = player
-		roots[id] = giveCharacter(world, player)
 		table.insert(world.Players, player)
 		world:FirePlayerAdded(player)
+		roots[id] = giveCharacter(world, player)
 	end
 	world:Advance(5)
 	local data = {}
@@ -156,24 +175,32 @@ test(`Scale: {PLAYERS} игроков проходят полный цикл в�
 		data[id].PvP.ShieldExpiresAt = nil -- щит входа мешал бы рейду
 	end
 
-	-- 1. Сбор: фрагменты общие и спавнятся порциями — игроки разбирают их по мере появления.
+	-- 1. Сбор: фрагменты общие и спавнятся порциями — игроки разбирают их по мере появления
+	-- (на каждый фрагмент идёт один ещё не собравший игрок).
 	local collected = 0
 	for _ = 1, 200 do
 		if collected == PLAYERS then
 			break
 		end
-		for id, player in players do
-			if data[id].Meta.FirstCollectAt == nil then
-				for _, part in world.Instances do
-					if part.ClassName == "Part" and part:GetAttribute("FragmentId") and not part.Destroyed then
-						roots[id].Position = at(part.Position)
-						handlers.RequestCollect(player, part:GetAttribute("FragmentId"))
-						if data[id].Meta.FirstCollectAt then
-							collected += 1
-						end
-						break
-					end
-				end
+		local targets, claims = {}, {}
+		local free = {}
+		for _, part in world.Instances do
+			if part.ClassName == "Part" and part:GetAttribute("FragmentId") and not part.Destroyed then
+				table.insert(free, part)
+			end
+		end
+		for id in players do
+			if data[id].Meta.FirstCollectAt == nil and #free > 0 then
+				local part = table.remove(free)
+				targets[id] = at(part.Position)
+				claims[id] = part:GetAttribute("FragmentId")
+			end
+		end
+		walkTo(targets)
+		for id, fragmentId in claims do
+			handlers.RequestCollect(players[id], fragmentId)
+			if data[id].Meta.FirstCollectAt then
+				collected += 1
 			end
 		end
 		world:Advance(3)
@@ -195,21 +222,29 @@ test(`Scale: {PLAYERS} игроков проходят полный цикл в�
 	world:Advance(2)
 
 	-- 4. PvP: каждый грабит следующего по кругу.
+	local raidTargets = {}
+	for id in players do
+		raidTargets[id] = at(assert(S.PvPRaidSystem.GetRaidInstancePosition(id % PLAYERS + 1)))
+	end
+	walkTo(raidTargets)
 	for id, player in players do
-		local targetId = id % PLAYERS + 1
-		roots[id].Position = at(assert(S.PvPRaidSystem.GetRaidInstancePosition(targetId)))
-		handlers.RequestRaidStart(player, targetId)
+		handlers.RequestRaidStart(player, id % PLAYERS + 1)
 	end
 	world:Advance(2)
 
-	-- 5. Хаос: шкалу накачивают события конвейера (Fearful), затем каждый бьёт босса один раз.
+	-- 5. Хаос: игроки подходят к боссу, шкалу накачивают события конвейера (Fearful), затем
+	-- каждый бьёт босса один раз.
+	local bossTargets = {}
+	for id in players do
+		bossTargets[id] = at(chaosConfig.BossPosition)
+	end
+	walkTo(bossTargets)
 	local pump = world:NewPlayer(0) -- «игрок» без профиля: XP пропуска не получает
 	for _ = 1, math.ceil(chaosConfig.ActivationThreshold / chaosConfig.FearfulGainPerEvent) do
 		S.FactorySystem.OnEssenceProduced:Fire(pump, 1, "Fearful")
 	end
 	assert(S.ChaosBossSystem.GetState().Active, "Хаос-ивент стартовал")
-	for id, player in players do
-		roots[id].Position = at(chaosConfig.BossPosition)
+	for _, player in players do
 		handlers.RequestAttackBoss(player)
 	end
 	local chaos = S.ChaosBossSystem.GetState()

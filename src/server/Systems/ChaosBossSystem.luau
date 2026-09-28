@@ -14,7 +14,7 @@
 	- босс — анкеренный Part-плейсхолдер в Workspace (атрибуты Health/MaxHealth — для
 	  клиентского UI в S14; клиент их только отображает);
 	- RequestAttackBoss() — без аргументов: клиент присылает только намерение. Урон
-	  (ChaosBossConfig.DamagePerHit), дистанцию (позиция персонажа на сервере до центра
+	  (ChaosBossConfig.DamagePerHit), дистанцию (доверенная позиция MovementGuard до центра
 	  босса) и кулдаун удара сервер проверяет сам; rate limit — как в других системах;
 	- tryAttack — одна функция без yield: урон урезается до остатка HP (добивающий не
 	  получает вклад сверх него), HP не уходит ниже нуля, при HP = 0 ивент завершается
@@ -53,6 +53,7 @@ local DataSystem = require(script.Parent.DataSystem)
 local FactorySystem = require(script.Parent.FactorySystem)
 local AnalyticsSystem = require(script.Parent.AnalyticsSystem)
 local RateLimiter = require(script.Parent.Parent.Services.RateLimiter)
+local MovementGuard = require(script.Parent.Parent.Services.MovementGuard)
 
 export type Outcome = "Victory" | "Timeout"
 
@@ -139,17 +140,6 @@ local function registerReject(player: Player, reason: string, now: number)
 				.. `{state.Rejects} отклонённых RequestAttackBoss за {REJECT_LOG_WINDOW} с, последняя причина: {reason}`
 		)
 	end
-end
-
--- Позиция корня живого персонажа на сервере (клиентской позиции не доверяем).
-local function getRootPosition(player: Player): Vector3?
-	local character = player.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	local root = character and character:FindFirstChild("HumanoidRootPart")
-	if not humanoid or humanoid.Health <= 0 or not root or not root:IsA("BasePart") then
-		return nil
-	end
-	return root.Position
 end
 
 local function createBossPart(): Part
@@ -369,13 +359,14 @@ local function tryAttack(player: Player, now: number): string?
 		return "no-profile"
 	end
 
-	local rootPosition = getRootPosition(player)
+	local rootPosition = MovementGuard.GetTrustedPosition(player)
 	if not rootPosition or not bossPart then
 		return "no-character"
 	end
 	-- Дистанция — до серверной позиции босса (анкерный Part; клиент её не двигает).
 	local maxDistance = ChaosBossConfig.AttackRange + ChaosBossConfig.DistanceTolerance
-	if (rootPosition - bossPart.Position).Magnitude > maxDistance then
+	-- «не (≤)», а не «>»: NaN-дистанция — отказ, а не проход.
+	if not ((rootPosition - bossPart.Position).Magnitude <= maxDistance) then
 		return "too-far"
 	end
 

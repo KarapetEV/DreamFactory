@@ -18,8 +18,8 @@
 	  ни второй запрос, ни выход цели;
 	- проверки: цель на этом сервере (Players:GetPlayerByUserId) и с загруженным профилем,
 	  цель ≠ атакующий, кулдаун пары attacker→target, щит цели (PvP.ShieldExpiresAt), grace-окно
-	  после недавнего рейда (PvP.LastRaidedAt — от любого атакующего), дистанция от серверной
-	  позиции атакующего до плейсхолдер-Part рейд-инстанса цели;
+	  после недавнего рейда (PvP.LastRaidedAt — от любого атакующего), дистанция от доверенной
+	  позиции атакующего (MovementGuard) до плейсхолдер-Part рейд-инстанса цели;
 	- кумулятивный лимит потерь цели за StolenWindowDuration от всех атакующих вместе — более
 	  строгий из абсолютного (MaxStolenPerTargetWindow) и относительного (EssenceAtWindowStart ×
 	  MaxStolenPercentPerTargetWindow): окно ротируется лениво здесь же (истекло или не
@@ -60,6 +60,7 @@ local FactorySystem = require(script.Parent.FactorySystem)
 local PetSystem = require(script.Parent.PetSystem)
 local AnalyticsSystem = require(script.Parent.AnalyticsSystem)
 local RateLimiter = require(script.Parent.Parent.Services.RateLimiter)
+local MovementGuard = require(script.Parent.Parent.Services.MovementGuard)
 
 type PlayerProfile = Types.PlayerProfile
 
@@ -138,17 +139,6 @@ local function reportCorruption(userId: number, reason: string)
 		corruptionReported[userId] = true
 		warn(`[PvPRaidSystem] Некорректные данные профиля {userId}: {reason}`)
 	end
-end
-
--- Позиция корня живого персонажа на сервере (клиентской позиции не доверяем).
-local function getRootPosition(player: Player): Vector3?
-	local character = player.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	local root = character and character:FindFirstChild("HumanoidRootPart")
-	if not humanoid or humanoid.Health <= 0 or not root or not root:IsA("BasePart") then
-		return nil
-	end
-	return root.Position
 end
 
 ------------------------------------------------------------------------------------------
@@ -334,16 +324,17 @@ local function tryRaid(attacker: Player, targetUserId: unknown, now: number, now
 		return "recently-raided"
 	end
 
-	-- «Вошёл в рейд-инстанс»: серверная позиция атакующего у Part'а цели.
+	-- «Вошёл в рейд-инстанс»: доверенная позиция атакующего (MovementGuard) у Part'а цели.
 	local instance = raidInstances[targetId]
 	if not instance then
 		return "no-instance"
 	end
-	local rootPosition = getRootPosition(attacker)
+	local rootPosition = MovementGuard.GetTrustedPosition(attacker)
 	if not rootPosition then
 		return "no-character"
 	end
-	if (rootPosition - instance.Position).Magnitude > PvPConfig.RaidRange + PvPConfig.DistanceTolerance then
+	-- «не (≤)», а не «>»: NaN-дистанция — отказ, а не проход.
+	if not ((rootPosition - instance.Position).Magnitude <= PvPConfig.RaidRange + PvPConfig.DistanceTolerance) then
 		return "too-far"
 	end
 

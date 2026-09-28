@@ -6,8 +6,9 @@
 	- Сервер по таймеру спавнит фрагменты (анкеренные Part) в зонах из CollectionConfig
 	  в Workspace.DreamFragments; клиент их только видит и присылает intent RequestCollect(fragmentId).
 	- Клиенту не доверяем ничего, кроме id: позиция фрагмента берётся из серверного реестра,
-	  позиция игрока — из его персонажа на сервере, радиус/кулдаун/ёмкость — из уровней профиля
-	  и UpgradeConfig (UpgradeEffects зажимает уровень в [0, MaxLevel] — эффект не растёт без предела).
+	  позиция игрока — доверенная из MovementGuard (телепорт её не сдвигает), радиус/кулдаун/
+	  ёмкость — из уровней профиля и UpgradeConfig (UpgradeEffects зажимает уровень в
+	  [0, MaxLevel] — эффект не растёт без предела).
 	- Радиус сбора = значение апгрейда (UpgradeEffects) × CollectionRadiusMultiplier надетых
 	  Nostalgic-петов из кэша PetSystem (без кэша — 1; на каждый запрос не пересчитывается).
 	- Сбор — одна функция без yield между проверками и записью (collectFragment): фрагмент
@@ -40,6 +41,7 @@ local DataSystem = require(script.Parent.DataSystem)
 local PetSystem = require(script.Parent.PetSystem)
 local AnalyticsSystem = require(script.Parent.AnalyticsSystem)
 local RateLimiter = require(script.Parent.Parent.Services.RateLimiter)
+local MovementGuard = require(script.Parent.Parent.Services.MovementGuard)
 
 type PlayerProfile = Types.PlayerProfile
 type EmotionType = Types.EmotionType
@@ -236,17 +238,6 @@ local function getStorageCapacity(data: PlayerProfile): number
 	return UpgradeEffects.GetEffectValue("StorageCapacity", data.Factory.StorageCapacityLevel)
 end
 
--- Позиция корня живого персонажа на сервере (клиентской позиции не доверяем).
-local function getRootPosition(player: Player): Vector3?
-	local character = player.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	local root = character and character:FindFirstChild("HumanoidRootPart")
-	if not humanoid or humanoid.Health <= 0 or not root or not root:IsA("BasePart") then
-		return nil
-	end
-	return root.Position
-end
-
 -- Единая транзакция сбора — и для RequestCollect, и для авто-сборщика: проверки и запись
 -- без yield. Возвращает nil при успехе или причину отказа (для лога; клиенту не отправляется).
 -- Первая проверка — фрагмент всё ещё в реестре: собранный (кем угодно и каким угодно путём)
@@ -261,13 +252,14 @@ local function collectFragment(player: Player, data: PlayerProfile, fragment: Fr
 		return "cooldown"
 	end
 
-	local rootPosition = getRootPosition(player)
+	local rootPosition = MovementGuard.GetTrustedPosition(player)
 	if not rootPosition then
 		return "no-character"
 	end
 
 	local maxDistance = getCollectRadius(player, data) + CollectionConfig.DistanceTolerance
-	if (rootPosition - fragment.Position).Magnitude > maxDistance then
+	-- «не (≤)», а не «>»: NaN-дистанция — отказ, а не проход.
+	if not ((rootPosition - fragment.Position).Magnitude <= maxDistance) then
 		return "too-far"
 	end
 
@@ -334,7 +326,7 @@ local function autoCollectFor(player: Player, now: number)
 		return
 	end
 
-	local rootPosition = getRootPosition(player)
+	local rootPosition = MovementGuard.GetTrustedPosition(player)
 	if not rootPosition then
 		return
 	end

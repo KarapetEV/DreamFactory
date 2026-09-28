@@ -3,6 +3,10 @@
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local Systems = ServerScriptService.server.Systems
+local Services = ServerScriptService.server.Services
+
+-- MovementGuard до систем: доверенная позиция отслеживается с первого CharacterAdded.
+require(Services.MovementGuard).Init()
 
 -- DataSystem первым: остальные системы получают данные игрока через DataSystem.GetData/WaitForData.
 require(Systems.DataSystem).Init()

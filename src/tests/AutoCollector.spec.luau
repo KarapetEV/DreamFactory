@@ -102,7 +102,8 @@ local function setup()
 	return t
 end
 
--- Персонаж игрока на сервере с корнем в position.
+-- Персонаж игрока на сервере с корнем в position (новый персонаж — для MovementGuard это
+-- спавн). Возвращает корень: сдвиг root.Position — перемещение того же персонажа.
 local function placeCharacter(player, position)
 	local root = {
 		Position = position,
@@ -119,6 +120,7 @@ local function placeCharacter(player, position)
 			return if name == "HumanoidRootPart" then root else nil
 		end,
 	}
+	return root
 end
 
 -- Ставит персонажа над фрагментом на высоте distance. Точки спавна зоны разнесены
@@ -127,7 +129,14 @@ local function placeAbove(player, fragment, distance: number)
 	-- Vector3 доступен только модулям мира; нулевой вектор того же типа — разностью.
 	local offset = fragment.Position - fragment.Position
 	offset.Y = distance
-	placeCharacter(player, fragment.Position + offset)
+	return placeCharacter(player, fragment.Position + offset)
+end
+
+-- Ставит персонажа сбоку от фрагмента на distance studs по X.
+local function placeAside(player, fragment, distance: number)
+	local offset = fragment.Position - fragment.Position
+	offset.X = distance
+	return placeCharacter(player, fragment.Position + offset)
 end
 
 local function liveFragments(t)
@@ -394,6 +403,49 @@ test("Битый профиль/Monetization одного игрока не ва
 		end
 	end
 	assert(errors == 1, `ошибка битого профиля записана один раз, записей {errors}`)
+end)
+
+
+------------------------------------------------------------------------------------------
+-- MovementGuard: позиция для проверки дистанции — доверенная, не телепортированная
+------------------------------------------------------------------------------------------
+
+test("Телепорт к фрагменту: ручной RequestCollect отклоняется, после пешего подхода — проходит", function()
+	local t = setup()
+	local player, data = t.AddPlayer(1, false)
+	t.Collection.Init()
+	local fragment = firstFragment(t)
+	local id = fragment:GetAttribute("FragmentId")
+	local root = placeAside(player, fragment, 300)
+	t.Handlers.RequestCollect(player, id) -- далеко: отказ, базовая точка — здесь
+	assert(rawTotal(data) == 0)
+
+	-- Тот же персонаж мгновенно оказывается на фрагменте (раньше это проходило).
+	root.Position = fragment.Position
+	t.Handlers.RequestCollect(player, id)
+	assert(rawTotal(data) == 0, "телепорт не засчитан")
+	assert(not fragment.Destroyed, "фрагмент на месте")
+
+	-- Столько времени, сколько нужно, чтобы дойти пешком (WalkSpeed 16).
+	t.World:Advance(300 / 16)
+	t.Handlers.RequestCollect(player, id)
+	assert(rawTotal(data) == t.CollectionConfig.FragmentValue, `после подхода собрано {rawTotal(data)}`)
+	assert(fragment.Destroyed)
+end)
+
+test("Телепорт к фрагменту: авто-сборщик берёт фрагменты у доверенной позиции, не у телепортированной", function()
+	local t = setup()
+	local player, data = t.AddPlayer(1, true)
+	t.Collection.Init()
+	local fragment = firstFragment(t)
+	local root = placeAside(player, fragment, 300)
+	t.Tick() -- базовая точка — вдали от всех фрагментов
+	assert(rawTotal(data) == 0)
+
+	root.Position = fragment.Position
+	t.Tick()
+	assert(rawTotal(data) == 0, "тик после телепорта ничего не собрал")
+	assert(not fragment.Destroyed, "фрагмент на месте")
 end)
 
 return tests

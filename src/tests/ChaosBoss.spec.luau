@@ -102,6 +102,8 @@ local function setup(configPatch: { [string]: any }?, beforeInit: ((world: any) 
 		Ended = ended,
 	}
 
+	local roots = {}
+
 	-- Игрок с дефолтным профилем и персонажем в distance studs от центра босса.
 	function t.AddPlayer(userId: number, distance: number?)
 		local player = world:NewPlayer(userId)
@@ -112,6 +114,7 @@ local function setup(configPatch: { [string]: any }?, beforeInit: ((world: any) 
 		return player, data
 	end
 
+	-- Новый персонаж в distance studs (по X) от босса: для MovementGuard — спавн, не скачок.
 	function t.Place(player, distance: number)
 		local offset = config.BossPosition - config.BossPosition
 		offset.X = distance
@@ -130,6 +133,14 @@ local function setup(configPatch: { [string]: any }?, beforeInit: ((world: any) 
 				return if name == "HumanoidRootPart" then root else nil
 			end,
 		}
+		roots[player] = root
+	end
+
+	-- Тот же персонаж мгновенно оказывается в distance studs от босса (сдвиг root.Position).
+	function t.Move(player, distance: number)
+		local offset = config.BossPosition - config.BossPosition
+		offset.X = distance
+		roots[player].Position = config.BossPosition + offset
 	end
 
 	-- Выход с сервера: как Players после PlayerRemoving (Parent = nil, нет в GetPlayers).
@@ -303,6 +314,26 @@ test("Удар мимо дистанции отклоняется без уро�
 	t.Place(far, c.AttackRange + c.DistanceTolerance)
 	t.Attack(far)
 	assert(t.System.GetContribution(1) == c.DamagePerHit, "на границе допуска удар проходит")
+end)
+
+test("Телепорт к боссу не проходит проверку дистанции (MovementGuard); подход пешком — проходит", function()
+	local t = setup()
+	local c = t.Config
+	local p = t.AddPlayer(1, 300)
+	t.StartEvent()
+	t.Attack(p) -- далеко: отказ, базовая точка доверенной позиции — здесь
+	assert(t.System.GetContribution(1) == 0)
+
+	t.World:Advance(c.RequestWindow + 0.01)
+	t.Move(p, 0) -- тот же персонаж мгновенно у босса (раньше удар засчитывался)
+	t.Attack(p)
+	assert(t.System.GetContribution(1) == 0, "телепорт не засчитан")
+	assert(t.System.GetState().BossHealth == c.BossMaxHealth, "урона нет")
+
+	-- Столько времени, сколько нужно, чтобы дойти пешком (WalkSpeed 16).
+	t.World:Advance(300 / 16)
+	t.Attack(p)
+	assert(t.System.GetContribution(1) == c.DamagePerHit, "после подхода удар засчитан")
 end)
 
 test("Удар на кулдауне отклоняется без урона, после кулдауна — проходит", function()

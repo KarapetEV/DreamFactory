@@ -733,4 +733,124 @@ test("PvP-атака: событие PvPRaid атакующему с украд�
 	assert(#raids == 1 and raids[1].Player == attacker and raids[1].Value == stolen)
 end)
 
+------------------------------------------------------------------------------------------
+-- Кумулятивный лимит потерь цели (S19)
+------------------------------------------------------------------------------------------
+
+-- Цель с большим балансом: каждый рейд без защиты упирается в HardCap (5 000).
+local CAP_PATCH = { PvP = { MaxStolenPerTargetWindow = 12_000, StolenWindowDuration = 1_800 } }
+
+-- Пропустить grace-окно цели после прошлого рейда (оно от любого атакующего).
+local function afterGrace(t)
+	t.World:Advance(t.Config.RaidedGraceDuration + 1)
+end
+
+test("Лимит окна: три разных атакующих подряд не уносят больше MaxStolenPerTargetWindow", function()
+	local t = setup(CAP_PATCH)
+	local _, d = t.Join(9, 100_000)
+	local attackers = {}
+	for id = 1, 4 do
+		attackers[id] = t.Join(id, 0)
+	end
+	for id = 1, 4 do
+		afterGrace(t)
+		t.RaidAt(attackers[id], 9)
+	end
+	local stolen = {}
+	for _, raid in t.Completed do
+		table.insert(stolen, raid.Stolen)
+	end
+	assert(table.concat(stolen, ",") == "5000,5000,2000", `кражи: {table.concat(stolen, ",")}`)
+	assert(d.Currency.Essence == 100_000 - 12_000 and d.PvP.StolenInWindow == 12_000)
+	assert(#t.World.Warnings == 0, "отказ по лимиту — не подозрительная активность")
+end)
+
+test("Частичный остаток лимита урезает кражу, а не блокирует рейд", function()
+	local t = setup({ PvP = { MaxStolenPerTargetWindow = 7_000 } })
+	local a1 = t.Join(1, 0)
+	local a2, a = t.Join(2, 0)
+	local _, d = t.Join(9, 100_000)
+	t.RaidAt(a1, 9)
+	afterGrace(t)
+	t.RaidAt(a2, 9)
+	assert(#t.Completed == 2 and t.Completed[2].Stolen == 2_000, "второй рейд урезан до остатка")
+	assert(a.Currency.Essence == 2_000 and d.Currency.Essence == 93_000)
+end)
+
+test("Окно лимита истекает: после StolenWindowDuration цель снова можно грабить на полный лимит", function()
+	local t = setup(CAP_PATCH)
+	local _, d = t.Join(9, 100_000)
+	for id = 1, 3 do
+		afterGrace(t)
+		t.RaidAt(t.Join(id, 0), 9)
+	end
+	local start = d.PvP.StolenWindowStartsAt
+	assert(d.PvP.StolenInWindow == 12_000 and type(start) == "number")
+	afterGrace(t)
+	local late = t.Join(4, 0)
+	t.RaidAt(late, 9)
+	assert(#t.Completed == 3, "лимит исчерпан — отказ")
+
+	t.World:Advance(t.Config.StolenWindowDuration)
+	t.RaidAt(late, 9)
+	assert(#t.Completed == 4 and t.Completed[4].Stolen == 5_000, "новое окно")
+	assert(d.PvP.StolenInWindow == 5_000 and d.PvP.StolenWindowStartsAt > start)
+end)
+
+test("Лимит — у цели, а не у пары: смена цели атакующим не обходит и не тратит чужой лимит", function()
+	local t = setup({ PvP = { MaxStolenPerTargetWindow = 6_000 } })
+	local a1 = t.Join(1, 0)
+	local a2 = t.Join(2, 0)
+	local _, x = t.Join(8, 100_000)
+	local _, y = t.Join(9, 100_000)
+	t.RaidAt(a1, 9) -- 5 000 из лимита Y
+	t.RaidAt(a1, 8) -- другая цель: полный рейд, лимит Y не трогается
+	assert(x.PvP.StolenInWindow == 5_000 and y.PvP.StolenInWindow == 5_000)
+	afterGrace(t)
+	t.RaidAt(a2, 9) -- другой атакующий на Y: только остаток лимита Y
+	assert(t.Completed[3].Target == 9 and t.Completed[3].Stolen == 1_000)
+	assert(y.PvP.StolenInWindow == 6_000 and y.Currency.Essence == 94_000)
+end)
+
+test("Битые StolenInWindow / StolenWindowStartsAt — отказ, цель не тронута", function()
+	for _, corrupt in {
+		function(pvp)
+			pvp.StolenInWindow = "много"
+		end,
+		function(pvp)
+			pvp.StolenInWindow = 0 / 0
+		end,
+		function(pvp)
+			pvp.StolenInWindow = -1
+		end,
+		function(pvp)
+			pvp.StolenInWindow = nil
+		end,
+		function(pvp)
+			pvp.StolenWindowStartsAt = "вчера"
+		end,
+		function(pvp)
+			pvp.StolenWindowStartsAt = math.huge
+		end,
+	} do
+		local t = setup()
+		local attacker = t.Join(1, 0)
+		local _, d = t.Join(9, 100_000)
+		corrupt(d.PvP)
+		t.RaidAt(attacker, 9)
+		assert(#t.Completed == 0 and d.Currency.Essence == 100_000, "рейд отклонён")
+	end
+end)
+
+test("Профиль v7 мигрирует в v8: StolenInWindow = 0, окна ещё не было", function()
+	local world = Harness.NewWorld()
+	local _, dataSystem = world:NewServer()
+	assert(dataSystem.CURRENT_SCHEMA_VERSION == 8)
+	local v7 = { Meta = { SchemaVersion = 7 }, PvP = { LastRaidedAt = 5, GuardsPlaced = { "Sentinel" } } }
+	local migrated = assert(dataSystem.MigrateProfileData(v7))
+	assert(migrated.Meta.SchemaVersion == 8)
+	assert(migrated.PvP.StolenInWindow == 0 and migrated.PvP.StolenWindowStartsAt == nil)
+	assert(migrated.PvP.LastRaidedAt == 5 and migrated.PvP.GuardsPlaced[1] == "Sentinel")
+end)
+
 return tests

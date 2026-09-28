@@ -38,7 +38,7 @@ local STORE_NAME = "PlayerProfiles"
 local AUTOSAVE_INTERVAL = 4 * 60
 
 -- Поднимать на 1 при любом изменении структуры PlayerProfile + добавлять миграцию ниже.
-local CURRENT_SCHEMA_VERSION = 7
+local CURRENT_SCHEMA_VERSION = 8
 
 --[[
 	MIGRATIONS[n] переводит данные со SchemaVersion n на n + 1, мутируя таблицу на месте.
@@ -67,6 +67,8 @@ local CURRENT_SCHEMA_VERSION = 7
 	BattlePassPremium = false дозаполнит reconcile(); BattlePassSeasonId остаётся nil («сезона не
 	было» — BattlePassSystem сбросит прогресс при первом начислении XP). Meta.First*At остаются nil:
 	у старых игроков шаги воронки, пройденные до S18, разово залогируются позже (некритично).
+	7 → 8: кумулятивный лимит потерь PvP-цели (S19). PvP.StolenInWindow = 0 дозаполнит
+	reconcile(); StolenWindowStartsAt остаётся nil (окно начнётся первым рейдом на игрока).
 
 	Пример на будущее:
 	[1] = function(data)
@@ -99,6 +101,7 @@ local MIGRATIONS: { [number]: (data: any) -> () } = {
 		end
 	end,
 	[6] = function(_data: any) end,
+	[7] = function(_data: any) end,
 }
 
 for version = 0, CURRENT_SCHEMA_VERSION - 1 do
@@ -175,6 +178,8 @@ function DataSystem.BuildDefaultProfile(): PlayerProfile
 			ShieldExpiresAt = nil,
 			LastRaidedAt = nil,
 			GuardsPlaced = {},
+			StolenInWindow = 0,
+			StolenWindowStartsAt = nil,
 		},
 		Monetization = {
 			GamePassesOwned = {},

@@ -371,6 +371,11 @@ local function autoCollectTick()
 end
 
 local function onRequestCollect(player: Player, fragmentId: unknown)
+	-- Запрос после PlayerRemoving: getPlayerState пересоздал бы запись, которую уже никто
+	-- не очистит (утечка).
+	if player.Parent == nil then
+		return
+	end
 	local now = os.clock()
 	local state = getPlayerState(player)
 

@@ -59,6 +59,10 @@ export type PlayerProfile = {
 		ShieldExpiresAt: number?,
 		LastRaidedAt: number?,
 		GuardsPlaced: { string },
+		-- Кумулятивный лимит потерь (PvPConfig.MaxStolenPerTargetWindow): украдено всеми
+		-- атакующими в текущем окне и os.time() начала окна (nil — окна ещё не было).
+		StolenInWindow: number,
+		StolenWindowStartsAt: number?,
 	},
 	Monetization: {
 		GamePassesOwned: { string },

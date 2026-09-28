@@ -19,6 +19,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Types = require(ReplicatedStorage.shared.Types)
+local Loc = require(ReplicatedStorage.shared.Loc)
 local Remotes = require(ReplicatedStorage.shared.Remotes)
 local CocoonConfig = require(ReplicatedStorage.shared.Config.CocoonConfig)
 local PetConfig = require(ReplicatedStorage.shared.Config.PetConfig)
@@ -32,21 +33,21 @@ export type SnapshotSource = ShopUI.SnapshotSource
 
 -- Строки UI пока здесь; в таблицу локализации (раздел 10 ТЗ) переедут вместе с остальным UI.
 local TEXT = {
-	Title = "Питомцы",
-	Close = "X",
-	Menu = "Питомцы",
-	Slots = "Слоты: %d / %d · Петов: %d",
-	Hatch = "%s — %.0f",
-	InventoryFull = "Инвентарь полон",
-	Empty = "Петов пока нет — вылупите кокон",
-	Equip = "Надеть",
-	Unequip = "Снять",
-	NoSlots = "Нет слотов",
-	Waiting = "...",
-	Mutation = "мутация: %s",
-	Hatched = "Вылупился: %s (%s)",
-	Denied = "Запрос отклонён сервером",
-	Pet = "%s · %s · %s",
+	Title = Loc.Get("PetInventoryUI.Title"),
+	Close = Loc.Get("PetInventoryUI.Close"),
+	Menu = Loc.Get("PetInventoryUI.Menu"),
+	Slots = Loc.Get("PetInventoryUI.Slots"),
+	Hatch = Loc.Get("PetInventoryUI.Hatch"),
+	InventoryFull = Loc.Get("PetInventoryUI.InventoryFull"),
+	Empty = Loc.Get("PetInventoryUI.Empty"),
+	Equip = Loc.Get("PetInventoryUI.Equip"),
+	Unequip = Loc.Get("PetInventoryUI.Unequip"),
+	NoSlots = Loc.Get("PetInventoryUI.NoSlots"),
+	Waiting = Loc.Get("PetInventoryUI.Waiting"),
+	Mutation = Loc.Get("PetInventoryUI.Mutation"),
+	Hatched = Loc.Get("PetInventoryUI.Hatched"),
+	Denied = Loc.Get("PetInventoryUI.Denied"),
+	Pet = Loc.Get("PetInventoryUI.Pet"),
 }
 
 -- Сколько ждать ответа сервера, прежде чем разблокировать кнопки (запрос мог быть отброшен

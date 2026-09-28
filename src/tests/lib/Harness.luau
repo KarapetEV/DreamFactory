@@ -121,6 +121,8 @@ function Harness.NewWorld()
 	-- вызывает их через world:FirePlayerAdded/FirePlayerRemoving.
 	self.PlayerAddedHandlers = {} :: { (any) -> () }
 	self.PlayerRemovingHandlers = {} :: { (any) -> () }
+	-- Колбэки game:BindToClose: выключение сервера тест запускает сам (world:FireBindToClose).
+	self.BindToCloseHandlers = {} :: { () -> () }
 	-- Источник чисел в [0, 1) для застабленного Random (Random.new():NextNumber()).
 	-- Тест может подменить, чтобы задать исход ролла.
 	self.NextRandom = function(): number
@@ -250,6 +252,22 @@ end
 function World:FirePlayerRemoving(player: any)
 	for _, fn in table.clone(self.PlayerRemovingHandlers) do
 		self.Task.spawn(fn, player)
+	end
+end
+
+-- Выключение сервера: колбэки BindToClose — каждый в своей корутине, как в игре. Возвращает
+-- функцию «все колбэки завершились?» (сервер умирает, только когда все вернули управление).
+function World:FireBindToClose(): () -> boolean
+	local pending = 0
+	for _, fn in table.clone(self.BindToCloseHandlers) do
+		pending += 1
+		self.Task.spawn(function()
+			fn()
+			pending -= 1
+		end)
+	end
+	return function()
+		return pending == 0
 	end
 end
 
@@ -437,7 +455,9 @@ function World:_makeEnv(moduleCache: { [string]: any }, scriptPath: string?): { 
 	env.game = {
 		PlaceId = 1,
 		JobId = "",
-		BindToClose = function() end,
+		BindToClose = function(_self: any, fn: () -> ())
+			table.insert(world.BindToCloseHandlers, fn)
+		end,
 		GetService = function(_self: any, name: string)
 			return assert(services[name], `Harness: сервис {name} не застаблен`)
 		end,
@@ -492,6 +512,18 @@ function World:LoadModule(path: string, overrides: { [string]: any }?): any
 		cache[overridePath] = module
 	end
 	return self:_loadModule(path, cache)
+end
+
+-- Загрузчик с ОБЩИМ кэшем: модули, загруженные через него, видят одни и те же экземпляры
+-- зависимостей (как один процесс сервера). overrides — подмена зависимостей по пути.
+function World:ModuleLoader(overrides: { [string]: any }?): (path: string) -> any
+	local cache = {}
+	for overridePath, module in overrides or {} do
+		cache[overridePath] = module
+	end
+	return function(path: string): any
+		return self:_loadModule(path, cache)
+	end
 end
 
 Harness.DeepCopy = deepCopy

@@ -22,6 +22,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Types = require(ReplicatedStorage.shared.Types)
+local Loc = require(ReplicatedStorage.shared.Loc)
 local Signal = require(ReplicatedStorage.shared.Signal)
 local MonetizationConfig = require(ReplicatedStorage.shared.Config.MonetizationConfig)
 
@@ -36,23 +37,23 @@ export type SnapshotSource = {
 
 -- Строки UI пока здесь; в таблицу локализации (раздел 10 ТЗ) переедут вместе с остальным UI.
 local TEXT = {
-	Title = "Магазин",
-	Close = "X",
-	Menu = "Магазин",
-	TabGamePasses = "Геймпассы",
-	TabOneTime = "Разовые покупки",
-	TabSeason = "Сезонный пропуск",
-	PriceLoading = "Цена: загрузка...",
-	Price = "%d R$",
-	PriceFailed = "Цена недоступна",
-	NotForSale = "Не продаётся",
-	NotConfigured = "Геймпасс не настроен",
-	Buy = "Купить",
-	Owned = "Куплено",
-	Waiting = "...",
-	Unavailable = "Недоступно",
-	SoonButton = "Скоро",
-	SoonPrice = "Цена появится позже",
+	Title = Loc.Get("ShopUI.Title"),
+	Close = Loc.Get("ShopUI.Close"),
+	Menu = Loc.Get("ShopUI.Menu"),
+	TabGamePasses = Loc.Get("ShopUI.TabGamePasses"),
+	TabOneTime = Loc.Get("ShopUI.TabOneTime"),
+	TabSeason = Loc.Get("ShopUI.TabSeason"),
+	PriceLoading = Loc.Get("ShopUI.PriceLoading"),
+	Price = Loc.Get("ShopUI.Price"),
+	PriceFailed = Loc.Get("ShopUI.PriceFailed"),
+	NotForSale = Loc.Get("ShopUI.NotForSale"),
+	NotConfigured = Loc.Get("ShopUI.NotConfigured"),
+	Buy = Loc.Get("ShopUI.Buy"),
+	Owned = Loc.Get("ShopUI.Owned"),
+	Waiting = Loc.Get("ShopUI.Waiting"),
+	Unavailable = Loc.Get("ShopUI.Unavailable"),
+	SoonButton = Loc.Get("ShopUI.SoonButton"),
+	SoonPrice = Loc.Get("ShopUI.SoonPrice"),
 }
 
 -- Позиции-заглушки вкладок, которые появятся в S12. Реальных Id/цен нет намеренно.

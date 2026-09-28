@@ -22,7 +22,8 @@
 
 	Источники XP — подписки на сигналы систем (фиксированное число за событие, не за сумму):
 	FactorySystem.OnEssenceProduced, RebirthSystem.OnRebirthPerformed, ChaosBossSystem.OnBossHit,
-	PvPRaidSystem.OnRaidCompleted (атакующему), PetSystem.OnPetHatched.
+	PvPRaidSystem.OnRaidCompleted (атакующему, если украдено ≥ MinStolenForRaidXP),
+	PetSystem.OnPetHatched.
 
 	Премиум-ветка — дев-продукт DevProductConfig "BattlePassPremium". Выдачу проводит
 	существующий идемпотентный MonetizationSystem.ProcessReceipt (лог квитанций + маркер в
@@ -328,8 +329,10 @@ function BattlePassSystem.Init()
 	ChaosBossSystem.OnBossHit:Connect(function(player: Player)
 		BattlePassSystem.AddXP(player, BattlePassConfig.XPPerChaosHit)
 	end)
-	PvPRaidSystem.OnRaidCompleted:Connect(function(attacker: Player)
-		BattlePassSystem.AddXP(attacker, BattlePassConfig.XPPerRaid)
+	PvPRaidSystem.OnRaidCompleted:Connect(function(attacker: Player, _target: Player, stolen: number)
+		if isFinite(stolen) and stolen >= BattlePassConfig.MinStolenForRaidXP then
+			BattlePassSystem.AddXP(attacker, BattlePassConfig.XPPerRaid)
+		end
 	end)
 	PetSystem.OnPetHatched:Connect(function(player: Player)
 		BattlePassSystem.AddXP(player, BattlePassConfig.XPPerHatch)

@@ -13,6 +13,12 @@
 	    stolen = floor(base × (1 − защита цели))       -- защита — GuardConfig
 	stolen = 0 → рейд отклоняется без изменения состояния.
 
+	Кумулятивный лимит потерь цели (S19, GDD раздел 12 — «не допускать разорения»): за окно
+	StolenWindowDuration у одной цели ВСЕ атакующие вместе уносят не больше
+	MaxStolenPerTargetWindow. Остаток лимита урезает stolen (как HardCap); остатка нет —
+	отказ. Окно — по os.time() в профиле цели (PvP.StolenInWindow / StolenWindowStartsAt),
+	начинается первым рейдом после истечения предыдущего.
+
 	Время:
 	- ShieldDuration, RaidedGraceDuration — по os.time(): пишутся в профиль
 	  (PvP.ShieldExpiresAt, PvP.LastRaidedAt) и переживают смену сервера;
@@ -28,6 +34,9 @@ export type PvPDefinition = {
 	StealPercent: number,
 	-- Абсолютный потолок base за один рейд (до защиты).
 	HardCap: number,
+	-- Потолок суммы, украденной у одной цели всеми атакующими за StolenWindowDuration секунд.
+	MaxStolenPerTargetWindow: number,
+	StolenWindowDuration: number,
 	-- Секунд, в течение которых один атакующий не может снова атаковать ту же цель.
 	-- Другие цели этого атакующего и другие атакующие этой цели — не блокируются.
 	AttackCooldownPerTarget: number,
@@ -54,6 +63,8 @@ export type PvPDefinition = {
 local PvPConfig: PvPDefinition = {
 	StealPercent = 0.15,
 	HardCap = 5_000,
+	MaxStolenPerTargetWindow = 12_000,
+	StolenWindowDuration = 1_800,
 	AttackCooldownPerTarget = 600,
 	ShieldDuration = 300,
 	RaidedGraceDuration = 120,
@@ -84,6 +95,8 @@ do
 		`PvPConfig: StealPercent должен быть в (0, 1], получено {c.StealPercent}`
 	)
 	positive("HardCap", c.HardCap)
+	positive("MaxStolenPerTargetWindow", c.MaxStolenPerTargetWindow)
+	positive("StolenWindowDuration", c.StolenWindowDuration)
 	positive("AttackCooldownPerTarget", c.AttackCooldownPerTarget)
 	positive("ShieldDuration", c.ShieldDuration)
 	positive("RaidedGraceDuration", c.RaidedGraceDuration)

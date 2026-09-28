@@ -292,14 +292,14 @@ end)
 test("Профиль v6 мигрирует в v7: XP = 0, Premium = false, SeasonId = nil, воронка — nil", function()
 	local world = Harness.NewWorld()
 	local _, dataSystem = world:NewServer()
-	assert(dataSystem.CURRENT_SCHEMA_VERSION == 7)
+	assert(dataSystem.CURRENT_SCHEMA_VERSION >= 7)
 	local v6 = {
 		Meta = { SchemaVersion = 6, FirstJoinAt = 5, LastLoginAt = 6 },
 		Monetization = { GamePassesOwned = { "ExtraPetSlots" }, ProcessedReceipts = {}, BattlePassTier = 0 },
 	}
 	local migrated = assert(dataSystem.MigrateProfileData(v6))
 	local m = migrated.Monetization
-	assert(migrated.Meta.SchemaVersion == 7)
+	assert(migrated.Meta.SchemaVersion == dataSystem.CURRENT_SCHEMA_VERSION)
 	assert(m.BattlePassXP == 0 and m.BattlePassPremium == false and m.BattlePassSeasonId == nil and m.BattlePassTier == 0)
 	assert(m.GamePassesOwned[1] == "ExtraPetSlots", "остальное не тронуто")
 	local meta = migrated.Meta
@@ -486,6 +486,8 @@ test("XP за rebirth, удар по боссу, рейд (атакующему)
 	local target = t.World:NewPlayer(7)
 	t.PvP.OnRaidCompleted:Fire(t.Player, target, 1234)
 	assert(t.TotalXP() == c.XPPerRebirth + c.XPPerChaosHit + c.XPPerRaid, "рейд: XP атакующему")
+	t.PvP.OnRaidCompleted:Fire(t.Player, target, c.MinStolenForRaidXP - 1)
+	assert(t.TotalXP() == c.XPPerRebirth + c.XPPerChaosHit + c.XPPerRaid, "копеечный рейд (фарм на альтах) XP не даёт")
 
 	local cocoons = t.World:LoadModule("src/shared/Config/CocoonConfig")
 	local cocoonId, cocoon = next(cocoons)

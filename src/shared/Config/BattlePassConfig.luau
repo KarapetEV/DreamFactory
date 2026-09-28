@@ -47,7 +47,9 @@ export type BattlePassDefinition = {
 	XPPerFactoryCycle: number, -- за событие FactorySystem.OnEssenceProduced
 	XPPerRebirth: number,
 	XPPerChaosHit: number, -- за засчитанный удар по Хаос-боссу
-	XPPerRaid: number, -- атакующему за успешный рейд
+	XPPerRaid: number, -- атакующему за успешный рейд с кражей ≥ MinStolenForRaidXP
+	-- Рейд, унёсший меньше, XP не даёт: иначе XP фармится рейдами на альтов с копеечным балансом.
+	MinStolenForRaidXP: number,
 	XPPerHatch: number,
 	FreeRewards: { [number]: FreeReward }, -- ключи 1..MaxTier
 	PremiumRewards: { [number]: PremiumReward }, -- ключи 1..MaxTier
@@ -65,6 +67,7 @@ local BattlePassConfig: BattlePassDefinition = {
 	XPPerRebirth = 150,
 	XPPerChaosHit = 2,
 	XPPerRaid = 25,
+	MinStolenForRaidXP = 100,
 	XPPerHatch = 10,
 
 	FreeRewards = {
@@ -134,6 +137,7 @@ do
 	positive("XPPerRebirth", c.XPPerRebirth)
 	positive("XPPerChaosHit", c.XPPerChaosHit)
 	positive("XPPerRaid", c.XPPerRaid)
+	positive("MinStolenForRaidXP", c.MinStolenForRaidXP)
 	positive("XPPerHatch", c.XPPerHatch)
 
 	assert(

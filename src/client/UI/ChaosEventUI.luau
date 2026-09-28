@@ -20,6 +20,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
 local Types = require(ReplicatedStorage.shared.Types)
+local Loc = require(ReplicatedStorage.shared.Loc)
 local Remotes = require(ReplicatedStorage.shared.Remotes)
 local Signal = require(ReplicatedStorage.shared.Signal)
 local ChaosBossConfig = require(ReplicatedStorage.shared.Config.ChaosBossConfig)
@@ -39,15 +40,15 @@ local RESULT_SECONDS = 5
 
 -- Строки UI пока здесь; в таблицу локализации (раздел 10 ТЗ) переедут вместе с остальным UI.
 local TEXT = {
-	Title = "Вторжение Кошмара",
-	Health = "%s / %s",
-	Contribution = "Ваш вклад: %s урона",
-	Attack = "Атаковать",
-	TooFar = "Подойдите ближе к Кошмару",
-	Victory = "Кошмар повержен!",
-	Timeout = "Кошмар отступил.",
-	Reward = "Награда: +%s Essence",
-	NoReward = "Вы не участвовали. Награда: 0",
+	Title = Loc.Get("ChaosEventUI.Title"),
+	Health = Loc.Get("ChaosEventUI.Health"),
+	Contribution = Loc.Get("ChaosEventUI.Contribution"),
+	Attack = Loc.Get("ChaosEventUI.Attack"),
+	TooFar = Loc.Get("ChaosEventUI.TooFar"),
+	Victory = Loc.Get("ChaosEventUI.Victory"),
+	Timeout = Loc.Get("ChaosEventUI.Timeout"),
+	Reward = Loc.Get("ChaosEventUI.Reward"),
+	NoReward = Loc.Get("ChaosEventUI.NoReward"),
 }
 
 local BUTTON_ENABLED = Color3.fromRGB(200, 60, 80)

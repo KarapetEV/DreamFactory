@@ -386,6 +386,38 @@ test("S4-2: onPlayerAdded с нормальным профилем не кика
 	assert(lockOf(world) ~= nil, "лок держится")
 end)
 
+test("BindToClose (DataSystem.Init): выключение сервера сохраняет профиль и снимает лок", function()
+	local world, dataSystem = joinWithRecord({ Meta = { SchemaVersion = 2 }, Currency = { Essence = 3 } })
+	assert(#world.BindToCloseHandlers == 1, "DataSystem.Init зарегистрировал BindToClose")
+	local data = dataSystem.GetData(world.Players[1])
+	data.Currency.Essence = 777 -- прогресс после последнего автосейва
+
+	table.insert(world.StoreDelays, 5) -- медленная финальная запись
+	local finished = world:FireBindToClose()
+	assert(not finished(), "колбэк ждёт записи, а не возвращает управление сразу")
+	world:Advance(30)
+	assert(finished(), "колбэк завершился в пределах лимита BindToClose (30 с)")
+	assert(world.Records[KEY].Data.Currency.Essence == 777, "финальные данные записаны")
+	assert(lockOf(world) == nil, "лок снят — следующий сервер загрузит без ожидания")
+end)
+
+test("BindToClose ждёт релиз, уже запущенный из PlayerRemoving", function()
+	local world, dataSystem = joinWithRecord({ Meta = { SchemaVersion = 2 }, Currency = { Essence = 3 } })
+	local player = world.Players[1]
+	dataSystem.GetData(player).Currency.Essence = 55
+
+	table.insert(world.StoreDelays, 10) -- релиз выходящего игрока висит на записи
+	world:FirePlayerRemoving(player)
+	player.Parent = nil
+	world.Players = {}
+	local finished = world:FireBindToClose()
+	world:Advance(5)
+	assert(not finished(), "сервер не умирает, пока финальная запись вышедшего не легла")
+	world:Advance(30)
+	assert(finished())
+	assert(world.Records[KEY].Data.Currency.Essence == 55 and lockOf(world) == nil)
+end)
+
 ------------------------------------------------------------------------------------------
 -- Fallback на in-memory хранилище в Studio (S2-fix)
 ------------------------------------------------------------------------------------------

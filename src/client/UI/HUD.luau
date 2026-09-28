@@ -23,6 +23,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Types = require(ReplicatedStorage.shared.Types)
+local Loc = require(ReplicatedStorage.shared.Loc)
 local Remotes = require(ReplicatedStorage.shared.Remotes)
 local Signal = require(ReplicatedStorage.shared.Signal)
 local UpgradeConfig = require(ReplicatedStorage.shared.Config.UpgradeConfig)
@@ -50,20 +51,20 @@ local VALUE_FORMATS: { [string]: string } = {
 	CollectionSpeed = "%.2f с",
 }
 local TEXT = {
-	EssenceLabel = "Essence: %s",
-	BiomeLabel = "Биом: %s",
-	ClarityLabel = "Ясность: ×%.2f · Перерождений: %d",
-	RebirthProgress = "%s / %s",
-	RebirthButton = "Перерождение",
-	RebirthDone = "Перерождение выполнено!",
-	RebirthDenied = "Перерождение отклонено",
-	FragmentsLabel = "Фрагменты: %s / %s",
-	Waiting = "Загрузка...",
-	Buy = "Купить: %.0f",
-	Max = "МАКС",
-	Pending = "...",
-	ChaosLabel = "Хаос: %s / %s",
-	ChaosActive = "Вторжение Кошмара!",
+	EssenceLabel = Loc.Get("HUD.EssenceLabel"),
+	BiomeLabel = Loc.Get("HUD.BiomeLabel"),
+	ClarityLabel = Loc.Get("HUD.ClarityLabel"),
+	RebirthProgress = Loc.Get("HUD.RebirthProgress"),
+	RebirthButton = Loc.Get("HUD.RebirthButton"),
+	RebirthDone = Loc.Get("HUD.RebirthDone"),
+	RebirthDenied = Loc.Get("HUD.RebirthDenied"),
+	FragmentsLabel = Loc.Get("HUD.FragmentsLabel"),
+	Waiting = Loc.Get("HUD.Waiting"),
+	Buy = Loc.Get("HUD.Buy"),
+	Max = Loc.Get("HUD.Max"),
+	Pending = Loc.Get("HUD.Pending"),
+	ChaosLabel = Loc.Get("HUD.ChaosLabel"),
+	ChaosActive = Loc.Get("HUD.ChaosActive"),
 }
 
 local BUTTON_ENABLED = Color3.fromRGB(80, 170, 90)

@@ -20,6 +20,10 @@
 	  цель ≠ атакующий, кулдаун пары attacker→target, щит цели (PvP.ShieldExpiresAt), grace-окно
 	  после недавнего рейда (PvP.LastRaidedAt — от любого атакующего), дистанция от серверной
 	  позиции атакующего до плейсхолдер-Part рейд-инстанса цели;
+	- кумулятивный лимит потерь цели (PvPConfig.MaxStolenPerTargetWindow за StolenWindowDuration,
+	  от всех атакующих вместе): окно ротируется лениво здесь же (истекло или не начиналось —
+	  StolenInWindow = 0 с началом в nowTime); stolen урезается до остатка лимита, остатка нет —
+	  отказ "target-loss-cap"; после записи StolenInWindow += stolen;
 	- битый раздел PvP/Currency у цели — отказ (не грабим профиль, который не можем прочитать);
 	  у атакующего — отказ; ошибка любого вида изолирована pcall в обработчике.
 
@@ -73,6 +77,9 @@ local BENIGN_REJECTS: { [string]: true } = {
 	["recently-raided"] = true,
 	["target-offline"] = true,
 	["nothing-to-steal"] = true,
+	["target-loss-cap"] = true, -- цель активно грабят — обычный исход, не эксплойт
+	-- Битый профиль цели — не вина атакующего (порча уже в логе через reportCorruption).
+	["corrupt-target"] = true,
 }
 
 local isFinite = UpgradeEffects.IsFinite
@@ -303,7 +310,15 @@ local function tryRaid(attacker: Player, targetUserId: unknown, now: number, now
 	local shieldOk, shieldExpiresAt = optionalTime(pvp.ShieldExpiresAt)
 	local raidedOk, lastRaidedAt = optionalTime(pvp.LastRaidedAt)
 	local guards = pvp.GuardsPlaced
-	if not shieldOk or not raidedOk or type(guards) ~= "table" then
+	local windowOk, windowStartsAt = optionalTime(pvp.StolenWindowStartsAt)
+	local stolenInWindow = pvp.StolenInWindow
+	if
+		not shieldOk
+		or not raidedOk
+		or type(guards) ~= "table"
+		or not windowOk
+		or not validEssence(stolenInWindow)
+	then
 		reportCorruption(targetId, "раздел PvP повреждён")
 		return "corrupt-target"
 	end
@@ -350,6 +365,21 @@ local function tryRaid(attacker: Player, targetUserId: unknown, now: number, now
 	if stolen <= 0 then
 		return "nothing-to-steal"
 	end
+
+	-- Окно лимита потерь цели: ротация — только локальные значения, запишутся вместе с рейдом.
+	-- Отрицательная разница (метка с другого сервера со сдвигом часов) окно не сбрасывает.
+	if windowStartsAt == nil or nowTime - windowStartsAt >= PvPConfig.StolenWindowDuration then
+		windowStartsAt = nowTime
+		stolenInWindow = 0
+	end
+	local remaining = PvPConfig.MaxStolenPerTargetWindow - stolenInWindow
+	if remaining <= 0 then
+		return "target-loss-cap"
+	end
+	stolen = math.min(stolen, math.floor(remaining))
+	if stolen <= 0 then
+		return "target-loss-cap"
+	end
 	local newTargetEssence = targetEssence - stolen
 	local newAttackerEssence = attackerCurrency.Essence + stolen
 	if not validEssence(newTargetEssence) or not isFinite(newAttackerEssence) then
@@ -360,6 +390,8 @@ local function tryRaid(attacker: Player, targetUserId: unknown, now: number, now
 	targetCurrency.Essence = newTargetEssence
 	attackerCurrency.Essence = newAttackerEssence
 	pvp.LastRaidedAt = nowTime
+	pvp.StolenWindowStartsAt = windowStartsAt
+	pvp.StolenInWindow = stolenInWindow + stolen
 	-- Напавший теряет свой щит: иначе щит входа (обновляемый реджойном) давал бы
 	-- «граблю всех, ответить мне нельзя».
 	attackerPvP.ShieldExpiresAt = nil

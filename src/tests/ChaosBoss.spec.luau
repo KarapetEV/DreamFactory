@@ -857,4 +857,60 @@ test("Участие в Хаос-ивенте: ChaosEventJoined один раз 
 	assert(hits[1].Player == p1 and hits[1].Dealt == t.Config.DamagePerHit and hits[1].EventId == eventId)
 end)
 
+------------------------------------------------------------------------------------------
+-- Пустой и переполненный сервер (S19, чек-лист раздела 12 ТЗ)
+------------------------------------------------------------------------------------------
+
+test("Пустой сервер: ивент без единого участника и без игроков завершается таймаутом чисто", function()
+	local t = setup()
+	t.StartEvent() -- шкалу накачал «ушедший» игрок; на сервере никого
+	assert(#t.World.Players == 0)
+	t.World:Advance(t.Config.EventDuration + 1)
+	local state = t.System.GetState()
+	assert(not state.Active and state.ChaosLevel == 0 and state.BossHealth == 0, "состояние сброшено")
+	assert(#t.Ended == 1 and t.Ended[1].Outcome == "Timeout" and next(t.Ended[1].Rewards) == nil)
+	assert(#t.BossParts() == 0, "босс убран")
+	assert(#t.World.Warnings == 0, "пустой вклад — не ошибка")
+
+	-- Игроки есть, но никто не бил: всем снимок завершения с нулями, наград нет.
+	local t2 = setup()
+	local _, data = t2.AddPlayer(1)
+	local essence = data.Currency.Essence
+	t2.StartEvent()
+	t2.World:Advance(t2.Config.EventDuration + 1)
+	local ended = t2.LastTo(1).Ended
+	assert(ended and ended.Damage == 0 and ended.Reward == 0 and data.Currency.Essence == essence)
+	assert(next(t2.Ended[1].Rewards) == nil)
+end)
+
+test("Переполненный сервер: 150 участников — победа, награда каждому по вкладу, сумма ограничена HP", function()
+	local players = 150
+	local t = setup({ BossMaxHealth = players * 10, DamagePerHit = 10 })
+	local c = t.Config
+	local list = {}
+	for id = 1, players do
+		local player, data = t.AddPlayer(id, 5)
+		table.insert(list, { Player = player, Data = data, Essence = data.Currency.Essence })
+	end
+	t.StartEvent()
+	for _, entry in list do
+		t.Attack(entry.Player)
+	end
+	-- Лишний удар после смерти босса ничего не даёт.
+	t.Cooldown()
+	t.Attack(list[1].Player)
+
+	assert(#t.Ended == 1 and t.Ended[1].Outcome == "Victory")
+	local expected = c.DamagePerHit * c.RewardEssencePerDamage * c.VictoryRewardMultiplier
+	local total = 0
+	for id, entry in list do
+		assert(near(entry.Data.Currency.Essence, entry.Essence + expected), `игрок {id}`)
+		total += t.Ended[1].Rewards[id]
+		local ended = t.LastTo(id).Ended
+		assert(ended and ended.Damage == c.DamagePerHit, `снимок завершения игроку {id}`)
+	end
+	assert(near(total, c.BossMaxHealth * c.RewardEssencePerDamage * c.VictoryRewardMultiplier), "сумма ≤ HP × ставка")
+	assert(#t.World.Warnings == 0)
+end)
+
 return tests

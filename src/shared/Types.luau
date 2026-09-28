@@ -63,6 +63,9 @@ export type PlayerProfile = {
 		-- атакующими в текущем окне и os.time() начала окна (nil — окна ещё не было).
 		StolenInWindow: number,
 		StolenWindowStartsAt: number?,
+		-- Баланс цели на старте текущего окна (база относительного лимита
+		-- PvPConfig.MaxStolenPercentPerTargetWindow); перезаписывается при каждой ротации окна.
+		EssenceAtWindowStart: number,
 	},
 	Monetization: {
 		GamePassesOwned: { string },

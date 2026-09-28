@@ -832,6 +832,12 @@ test("Битые StolenInWindow / StolenWindowStartsAt — отказ, цель 
 		function(pvp)
 			pvp.StolenWindowStartsAt = math.huge
 		end,
+		function(pvp)
+			pvp.EssenceAtWindowStart = "много"
+		end,
+		function(pvp)
+			pvp.EssenceAtWindowStart = -5
+		end,
 	} do
 		local t = setup()
 		local attacker = t.Join(1, 0)
@@ -845,12 +851,102 @@ end)
 test("Профиль v7 мигрирует в v8: StolenInWindow = 0, окна ещё не было", function()
 	local world = Harness.NewWorld()
 	local _, dataSystem = world:NewServer()
-	assert(dataSystem.CURRENT_SCHEMA_VERSION == 8)
+	assert(dataSystem.CURRENT_SCHEMA_VERSION >= 8)
 	local v7 = { Meta = { SchemaVersion = 7 }, PvP = { LastRaidedAt = 5, GuardsPlaced = { "Sentinel" } } }
 	local migrated = assert(dataSystem.MigrateProfileData(v7))
-	assert(migrated.Meta.SchemaVersion == 8)
+	assert(migrated.Meta.SchemaVersion == dataSystem.CURRENT_SCHEMA_VERSION)
 	assert(migrated.PvP.StolenInWindow == 0 and migrated.PvP.StolenWindowStartsAt == nil)
 	assert(migrated.PvP.LastRaidedAt == 5 and migrated.PvP.GuardsPlaced[1] == "Sentinel")
+end)
+
+------------------------------------------------------------------------------------------
+-- Относительный лимит потерь цели (S19)
+------------------------------------------------------------------------------------------
+
+-- Рой: count разных атакующих по очереди грабят цель targetId (с паузой на grace цели).
+local function swarm(t, targetId: number, count: number, firstId: number?)
+	for i = 1, count do
+		afterGrace(t)
+		t.RaidAt(t.Join((firstId or 100) + i, 0), targetId)
+	end
+end
+
+test("Бедная цель: относительный лимит останавливает рой атакующих задолго до нуля", function()
+	local t = setup()
+	local start = 2_000
+	assert(start < t.Config.MaxStolenPerTargetWindow, "предпосылка: абсолютный лимит для неё не срабатывает")
+	local _, d = t.Join(9, start)
+	swarm(t, 9, 10)
+	local cap = math.floor(start * t.Config.MaxStolenPercentPerTargetWindow)
+	assert(d.PvP.StolenInWindow == cap, `унесено {d.PvP.StolenInWindow}, лимит {cap}`)
+	assert(d.Currency.Essence == start - cap, `баланс {d.Currency.Essence}`)
+	assert(#t.Completed < 10, "остальные атакующие получили отказ")
+	assert(d.PvP.EssenceAtWindowStart == start)
+end)
+
+test("Богатая цель: действует абсолютный лимит, как раньше", function()
+	local t = setup()
+	local start = 200_000
+	local relative = start * t.Config.MaxStolenPercentPerTargetWindow
+	assert(relative > t.Config.MaxStolenPerTargetWindow, "предпосылка: относительный лимит мягче")
+	local _, d = t.Join(9, start)
+	swarm(t, 9, 6)
+	assert(d.PvP.StolenInWindow == t.Config.MaxStolenPerTargetWindow)
+	assert(d.Currency.Essence == start - t.Config.MaxStolenPerTargetWindow)
+end)
+
+test("EssenceAtWindowStart фиксируется на старте окна и не меняется внутри него", function()
+	local t = setup()
+	local _, d = t.Join(9, 2_000)
+	swarm(t, 9, 1)
+	local first = t.Completed[1].Stolen
+	assert(d.PvP.EssenceAtWindowStart == 2_000, "баланс ДО кражи открывшего окно рейда")
+	local cap = math.floor(2_000 * t.Config.MaxStolenPercentPerTargetWindow)
+
+	-- Внутри окна баланс вырос (переработка, покупка) — база лимита прежняя.
+	d.Currency.Essence = 50_000
+	swarm(t, 9, 1, 200)
+	assert(d.PvP.EssenceAtWindowStart == 2_000)
+	assert(t.Completed[2].Stolen == cap - first, "урезано по базе окна, а не по новому балансу")
+	assert(d.PvP.StolenInWindow == cap)
+
+	-- Баланс упал — база тоже не меняется, лимит исчерпан.
+	d.Currency.Essence = 1_000
+	swarm(t, 9, 1, 300)
+	assert(#t.Completed == 2 and d.PvP.EssenceAtWindowStart == 2_000)
+
+	-- Новое окно берёт текущий баланс.
+	t.World:Advance(t.Config.StolenWindowDuration)
+	d.Currency.Essence = 40_000
+	swarm(t, 9, 1, 400)
+	assert(#t.Completed == 3 and d.PvP.EssenceAtWindowStart == 40_000, "ротация окна обновила базу")
+	assert(d.PvP.StolenInWindow == t.Completed[3].Stolen)
+end)
+
+test("Профиль v8 мигрирует в v9: EssenceAtWindowStart = 0, остальное PvP не тронуто", function()
+	local world = Harness.NewWorld()
+	local _, dataSystem = world:NewServer()
+	assert(dataSystem.CURRENT_SCHEMA_VERSION == 9)
+	local v8 = {
+		Meta = { SchemaVersion = 8 },
+		PvP = { StolenInWindow = 700, StolenWindowStartsAt = 123, GuardsPlaced = {} },
+	}
+	local migrated = assert(dataSystem.MigrateProfileData(v8))
+	assert(migrated.Meta.SchemaVersion == 9)
+	assert(migrated.PvP.EssenceAtWindowStart == 0)
+	assert(migrated.PvP.StolenInWindow == 700 and migrated.PvP.StolenWindowStartsAt == 123)
+end)
+
+test("PvPConfig: MaxStolenPercentPerTargetWindow вне (0, 1] роняет загрузку", function()
+	for _, bad in { "0", "1.5", "-0.1", "0 / 0" } do
+		local world = Harness.NewWorld()
+		world.SourcePatches["src/shared/Config/PvPConfig"] = function(source)
+			local patched = string.gsub(source, "MaxStolenPercentPerTargetWindow = [%d%.]+,", `MaxStolenPercentPerTargetWindow = {bad},`)
+			return patched
+		end
+		local ok, err = pcall(world.LoadModule, world, "src/shared/Config/PvPConfig")
+		assert(not ok and string.find(tostring(err), "MaxStolenPercentPerTargetWindow", 1, true), `значение {bad}: {err}`)
+	end
 end)
 
 return tests

@@ -38,7 +38,7 @@ local STORE_NAME = "PlayerProfiles"
 local AUTOSAVE_INTERVAL = 4 * 60
 
 -- Поднимать на 1 при любом изменении структуры PlayerProfile + добавлять миграцию ниже.
-local CURRENT_SCHEMA_VERSION = 8
+local CURRENT_SCHEMA_VERSION = 9
 
 --[[
 	MIGRATIONS[n] переводит данные со SchemaVersion n на n + 1, мутируя таблицу на месте.
@@ -69,6 +69,10 @@ local CURRENT_SCHEMA_VERSION = 8
 	у старых игроков шаги воронки, пройденные до S18, разово залогируются позже (некритично).
 	7 → 8: кумулятивный лимит потерь PvP-цели (S19). PvP.StolenInWindow = 0 дозаполнит
 	reconcile(); StolenWindowStartsAt остаётся nil (окно начнётся первым рейдом на игрока).
+	8 → 9: относительный лимит потерь (S19). PvP.EssenceAtWindowStart = 0 дозаполнит reconcile();
+	следующая ротация окна перезапишет его реальным балансом. Окно, открытое ещё на v8, до
+	своего истечения (≤ StolenWindowDuration) даёт относительный лимит 0 — цель в нём
+	неуязвима; ошибка в пользу цели, по-другому базу окна задним числом не восстановить.
 
 	Пример на будущее:
 	[1] = function(data)
@@ -102,6 +106,7 @@ local MIGRATIONS: { [number]: (data: any) -> () } = {
 	end,
 	[6] = function(_data: any) end,
 	[7] = function(_data: any) end,
+	[8] = function(_data: any) end,
 }
 
 for version = 0, CURRENT_SCHEMA_VERSION - 1 do
@@ -180,6 +185,7 @@ function DataSystem.BuildDefaultProfile(): PlayerProfile
 			GuardsPlaced = {},
 			StolenInWindow = 0,
 			StolenWindowStartsAt = nil,
+			EssenceAtWindowStart = 0,
 		},
 		Monetization = {
 			GamePassesOwned = {},

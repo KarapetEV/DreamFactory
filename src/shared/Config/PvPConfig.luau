@@ -15,9 +15,13 @@
 
 	Кумулятивный лимит потерь цели (S19, GDD раздел 12 — «не допускать разорения»): за окно
 	StolenWindowDuration у одной цели ВСЕ атакующие вместе уносят не больше
-	MaxStolenPerTargetWindow. Остаток лимита урезает stolen (как HardCap); остатка нет —
-	отказ. Окно — по os.time() в профиле цели (PvP.StolenInWindow / StolenWindowStartsAt),
-	начинается первым рейдом после истечения предыдущего.
+	min(MaxStolenPerTargetWindow, EssenceAtWindowStart × MaxStolenPercentPerTargetWindow) —
+	действует более строгий из абсолютного и относительного лимита. Относительный защищает
+	от разорения игрока с малым балансом (для него абсолютный не срабатывает никогда).
+	EssenceAtWindowStart — баланс цели в момент старта окна (до кражи открывшего его рейда),
+	фиксируется на всё окно. Остаток лимита урезает stolen (как HardCap); остатка нет —
+	отказ. Окно — по os.time() в профиле цели (PvP.StolenInWindow / StolenWindowStartsAt /
+	EssenceAtWindowStart), начинается первым рейдом после истечения предыдущего.
 
 	Время:
 	- ShieldDuration, RaidedGraceDuration — по os.time(): пишутся в профиль
@@ -36,6 +40,8 @@ export type PvPDefinition = {
 	HardCap: number,
 	-- Потолок суммы, украденной у одной цели всеми атакующими за StolenWindowDuration секунд.
 	MaxStolenPerTargetWindow: number,
+	-- Доля баланса цели на старте окна, которую можно унести за окно всем вместе, (0, 1].
+	MaxStolenPercentPerTargetWindow: number,
 	StolenWindowDuration: number,
 	-- Секунд, в течение которых один атакующий не может снова атаковать ту же цель.
 	-- Другие цели этого атакующего и другие атакующие этой цели — не блокируются.
@@ -64,6 +70,7 @@ local PvPConfig: PvPDefinition = {
 	StealPercent = 0.15,
 	HardCap = 5_000,
 	MaxStolenPerTargetWindow = 12_000,
+	MaxStolenPercentPerTargetWindow = 0.3,
 	StolenWindowDuration = 1_800,
 	AttackCooldownPerTarget = 600,
 	ShieldDuration = 300,
@@ -97,6 +104,12 @@ do
 	positive("HardCap", c.HardCap)
 	positive("MaxStolenPerTargetWindow", c.MaxStolenPerTargetWindow)
 	positive("StolenWindowDuration", c.StolenWindowDuration)
+	assert(
+		isFinite(c.MaxStolenPercentPerTargetWindow)
+			and c.MaxStolenPercentPerTargetWindow > 0
+			and c.MaxStolenPercentPerTargetWindow <= 1,
+		`PvPConfig: MaxStolenPercentPerTargetWindow должен быть в (0, 1], получено {c.MaxStolenPercentPerTargetWindow}`
+	)
 	positive("AttackCooldownPerTarget", c.AttackCooldownPerTarget)
 	positive("ShieldDuration", c.ShieldDuration)
 	positive("RaidedGraceDuration", c.RaidedGraceDuration)

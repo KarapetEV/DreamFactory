@@ -20,10 +20,12 @@
 	  цель ≠ атакующий, кулдаун пары attacker→target, щит цели (PvP.ShieldExpiresAt), grace-окно
 	  после недавнего рейда (PvP.LastRaidedAt — от любого атакующего), дистанция от серверной
 	  позиции атакующего до плейсхолдер-Part рейд-инстанса цели;
-	- кумулятивный лимит потерь цели (PvPConfig.MaxStolenPerTargetWindow за StolenWindowDuration,
-	  от всех атакующих вместе): окно ротируется лениво здесь же (истекло или не начиналось —
-	  StolenInWindow = 0 с началом в nowTime); stolen урезается до остатка лимита, остатка нет —
-	  отказ "target-loss-cap"; после записи StolenInWindow += stolen;
+	- кумулятивный лимит потерь цели за StolenWindowDuration от всех атакующих вместе — более
+	  строгий из абсолютного (MaxStolenPerTargetWindow) и относительного (EssenceAtWindowStart ×
+	  MaxStolenPercentPerTargetWindow): окно ротируется лениво здесь же (истекло или не
+	  начиналось — StolenInWindow = 0, начало nowTime, EssenceAtWindowStart = баланс цели до
+	  кражи этого рейда); stolen урезается до остатка лимита, остатка нет — отказ
+	  "target-loss-cap"; после записи StolenInWindow += stolen;
 	- битый раздел PvP/Currency у цели — отказ (не грабим профиль, который не можем прочитать);
 	  у атакующего — отказ; ошибка любого вида изолирована pcall в обработчике.
 
@@ -312,12 +314,14 @@ local function tryRaid(attacker: Player, targetUserId: unknown, now: number, now
 	local guards = pvp.GuardsPlaced
 	local windowOk, windowStartsAt = optionalTime(pvp.StolenWindowStartsAt)
 	local stolenInWindow = pvp.StolenInWindow
+	local essenceAtWindowStart = pvp.EssenceAtWindowStart
 	if
 		not shieldOk
 		or not raidedOk
 		or type(guards) ~= "table"
 		or not windowOk
 		or not validEssence(stolenInWindow)
+		or not validEssence(essenceAtWindowStart)
 	then
 		reportCorruption(targetId, "раздел PvP повреждён")
 		return "corrupt-target"
@@ -371,8 +375,10 @@ local function tryRaid(attacker: Player, targetUserId: unknown, now: number, now
 	if windowStartsAt == nil or nowTime - windowStartsAt >= PvPConfig.StolenWindowDuration then
 		windowStartsAt = nowTime
 		stolenInWindow = 0
+		essenceAtWindowStart = targetEssence -- «сколько было в начале периода»: до кражи этого рейда
 	end
-	local remaining = PvPConfig.MaxStolenPerTargetWindow - stolenInWindow
+	local relativeCap = essenceAtWindowStart * PvPConfig.MaxStolenPercentPerTargetWindow
+	local remaining = math.min(PvPConfig.MaxStolenPerTargetWindow, relativeCap) - stolenInWindow
 	if remaining <= 0 then
 		return "target-loss-cap"
 	end
@@ -391,6 +397,7 @@ local function tryRaid(attacker: Player, targetUserId: unknown, now: number, now
 	attackerCurrency.Essence = newAttackerEssence
 	pvp.LastRaidedAt = nowTime
 	pvp.StolenWindowStartsAt = windowStartsAt
+	pvp.EssenceAtWindowStart = essenceAtWindowStart
 	pvp.StolenInWindow = stolenInWindow + stolen
 	-- Напавший теряет свой щит: иначе щит входа (обновляемый реджойном) давал бы
 	-- «граблю всех, ответить мне нельзя».

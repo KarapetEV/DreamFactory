@@ -23,8 +23,13 @@ end
 local UI_MODULES = { "HUD", "ShopUI", "PetInventoryUI", "ChaosEventUI" }
 local LOC_PATH = "src/shared/Loc"
 
+-- Исходник без \r: при core.autocrlf файлы в рабочей копии могут быть с CRLF.
+local function readSource(path: string): string
+	return (string.gsub(fs.readFile(path), "\r\n", "\n"))
+end
+
 local function uiSource(name: string): string
-	return fs.readFile(`src/client/UI/{name}.luau`)
+	return readSource(`src/client/UI/{name}.luau`)
 end
 
 -- Тело «local TEXT = { ... }» модуля.
@@ -85,7 +90,7 @@ end)
 test("Нет дублирующихся ключей в исходнике Loc.luau", function()
 	local seen = {}
 	local count = 0
-	for key in string.gmatch(fs.readFile(LOC_PATH .. ".luau"), '\n\t%["([^"]+)"%] = {') do
+	for key in string.gmatch(readSource(LOC_PATH .. ".luau"), '\n\t%["([^"]+)"%] = {') do
 		assert(not seen[key], `ключ {key} повторяется`)
 		seen[key] = true
 		count += 1

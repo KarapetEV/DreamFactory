@@ -26,16 +26,21 @@ local function setup()
 	for _, product in config.Products do
 		byId[product.Id] = product
 	end
-	-- Копия продукта с «настоящим» ProductId (в реальном конфиге — заглушки 0).
-	local function configured(id: string)
+	-- Копии продукта с заданным ProductId: независимо от того, заведён ли он уже в конфиге.
+	local function withProductId(id: string, productId: number)
 		local product = Harness.DeepCopy(byId[id])
-		product.ProductId = 555
+		product.ProductId = productId
 		return product
 	end
 	return {
 		Offers = offers,
 		ById = byId,
-		Configured = configured,
+		Configured = function(id: string)
+			return withProductId(id, 555)
+		end,
+		Stub = function(id: string)
+			return withProductId(id, 0)
+		end,
 		AutoCollector = load("src/shared/Config/AutoCollectorConfig").GamePassId,
 	}
 end
@@ -62,7 +67,7 @@ end)
 test("Кнопка: заглушка ProductId = 0 недоступна при любой цене", function()
 	local t = setup()
 	for _, id in { "EssencePackS", "SpeedBoost", "MagnetBoost" } do
-		assert(t.Offers.ButtonState(t.ById[id], "Ready", {}, false) == "Unavailable", id)
+		assert(t.Offers.ButtonState(t.Stub(id), "Ready", {}, false) == "Unavailable", id)
 	end
 end)
 

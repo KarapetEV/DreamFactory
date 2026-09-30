@@ -57,27 +57,25 @@ local DevProductConfig: DevProductConfigDefinition = {
 		{
 			Id = "EssencePackS",
 			DisplayName = "Пак Эссенции S",
-			-- ЗАГЛУШКА. Перед публикацией заведите продукт в Creator Dashboard
-			-- (Creations → игра → Monetization → Developer Products) и впишите его id.
-			ProductId = 0,
+			ProductId = 3715691369,
 			Reward = { Kind = "Essence", Amount = 1_000 },
 		},
 		{
 			Id = "EssencePackM",
 			DisplayName = "Пак Эссенции M",
-			ProductId = 0, -- ЗАГЛУШКА, как у EssencePackS
+			ProductId = 3715691781,
 			Reward = { Kind = "Essence", Amount = 3_500 },
 		},
 		{
 			Id = "EssencePackL",
 			DisplayName = "Пак Эссенции L",
-			ProductId = 0, -- ЗАГЛУШКА
+			ProductId = 3715691984,
 			Reward = { Kind = "Essence", Amount = 9_000 },
 		},
 		{
 			Id = "EssencePackXL",
 			DisplayName = "Пак Эссенции XL",
-			ProductId = 0, -- ЗАГЛУШКА
+			ProductId = 3715692109,
 			Reward = { Kind = "Essence", Amount = 20_000 },
 		},
 		{
@@ -89,13 +87,13 @@ local DevProductConfig: DevProductConfigDefinition = {
 		{
 			Id = "MagnetBoost",
 			DisplayName = "Магнит-буст (20 с)",
-			ProductId = 0, -- ЗАГЛУШКА
+			ProductId = 3715692184,
 			Reward = { Kind = "Buff", BuffId = "MagnetBoost" },
 		},
 		{
 			Id = "SpeedBoost",
 			DisplayName = "Спид-буст (20 с)",
-			ProductId = 0, -- ЗАГЛУШКА
+			ProductId = 3715692301,
 			Reward = { Kind = "Buff", BuffId = "SpeedBoost" },
 		},
 	},

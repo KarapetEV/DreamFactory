@@ -191,7 +191,18 @@ end
 -- Конфиг
 ------------------------------------------------------------------------------------------
 
-test("DevProductConfig: паки Эссенции S/M/L/XL (объём растёт) + премиум пропуска + баффы, ProductId — заглушки 0", function()
+-- Id продуктов, заведённых в Creator Dashboard; BattlePassPremium ещё не заведён (заглушка 0).
+local LIVE_PRODUCT_IDS = {
+	EssencePackS = 3715691369,
+	EssencePackM = 3715691781,
+	EssencePackL = 3715691984,
+	EssencePackXL = 3715692109,
+	BattlePassPremium = 0,
+	MagnetBoost = 3715692184,
+	SpeedBoost = 3715692301,
+}
+
+test("DevProductConfig: паки Эссенции S/M/L/XL (объём растёт) + премиум пропуска + баффы, ProductId заведены (кроме премиума)", function()
 	local world = Harness.NewWorld()
 	local config = world:LoadModule("src/shared/Config/DevProductConfig")
 	local ids = {}
@@ -206,7 +217,7 @@ test("DevProductConfig: паки Эссенции S/M/L/XL (объём раст�
 		else
 			assert(product.Reward.Kind == "BattlePassPremium" and product.Reward.Amount == nil, product.Id)
 		end
-		assert(product.ProductId == 0, `{product.Id}: ProductId заглушка`)
+		assert(product.ProductId == LIVE_PRODUCT_IDS[product.Id], `{product.Id}: ProductId {product.ProductId}`)
 		assert(product.Price == nil, "цены в Robux в конфиге нет")
 	end
 	assert(
@@ -487,16 +498,20 @@ test("PurchaseId ровно на границе длины ключа DataStore 
 	assert(logRecord(t.World, overId) == nil)
 end)
 
-test("реальный конфиг (ProductId = 0): любая квитанция — NotProcessedYet, не выдача", function()
+test("реальный конфиг: ProductId = 0 (незаведённый премиум) и чужой id — NotProcessedYet; заведённый — выдаётся", function()
 	local world = Harness.NewWorld()
-	local server = newServer(world, world:LoadModule("src/shared/Config/DevProductConfig"))
+	local config = world:LoadModule("src/shared/Config/DevProductConfig")
+	local server = newServer(world, config)
 	local player = world:NewPlayer(42)
 	world.Players = { player }
 	local data = server.Load(player)
 	local start = data.Currency.Essence
-	assert(server.Receipt(receipt(42, "p", 0)) == NOT_YET)
-	assert(server.Receipt(receipt(42, "p", PRODUCT_ID)) == NOT_YET)
+	assert(server.Receipt(receipt(42, "p", 0)) == NOT_YET, "заглушка 0 не выдаётся")
+	assert(server.Receipt(receipt(42, "p", PRODUCT_ID)) == NOT_YET, "id не из конфига")
 	assert(data.Currency.Essence == start)
+
+	assert(server.Receipt(receipt(42, "p-live", LIVE_PRODUCT_IDS.EssencePackS)) == GRANTED)
+	assert(data.Currency.Essence == start + config.Products[1].Reward.Amount, "настоящий id пака S выдаёт пак S")
 end)
 
 test("повреждённая Essence или ProcessedReceipts: NotProcessedYet, профиль не тронут", function()

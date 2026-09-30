@@ -30,9 +30,11 @@ local function load(path: string): any
 end
 
 -- Загрузка модуля path с патчем исходника patchPath должна упасть с ожидаемой ошибкой.
+-- Патч видит исходник без \r: при core.autocrlf файлы в рабочей копии могут быть с CRLF.
 local function loadFails(patchPath: string, patch: (string) -> string, expected: string, path: string?)
 	local world = Harness.NewWorld()
-	world.SourcePatches[patchPath] = function(source: string): string
+	world.SourcePatches[patchPath] = function(raw: string): string
+		local source = string.gsub(raw, "\r\n", "\n")
 		local patched = patch(source)
 		assert(patched ~= source, "патч не применился — тест устарел")
 		return patched

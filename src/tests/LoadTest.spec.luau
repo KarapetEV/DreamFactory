@@ -243,6 +243,8 @@ test(`Scale: {PLAYERS} игроков проходят полный цикл в�
 	for _ = 1, math.ceil(chaosConfig.ActivationThreshold / chaosConfig.FearfulGainPerEvent) do
 		S.FactorySystem.OnEssenceProduced:Fire(pump, 1, "Fearful")
 	end
+	assert(S.ChaosBossSystem.GetState().Incoming, "телеграф появления босса")
+	world:Advance(chaosConfig.SpawnTelegraphDuration)
 	assert(S.ChaosBossSystem.GetState().Active, "Хаос-ивент стартовал")
 	for _, player in players do
 		handlers.RequestAttackBoss(player)

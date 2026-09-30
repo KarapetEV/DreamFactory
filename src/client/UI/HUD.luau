@@ -65,6 +65,7 @@ local TEXT = {
 	Pending = Loc.Get("HUD.Pending"),
 	ChaosLabel = Loc.Get("HUD.ChaosLabel"),
 	ChaosActive = Loc.Get("HUD.ChaosActive"),
+	ChaosIncoming = Loc.Get("HUD.ChaosIncoming"),
 }
 
 local BUTTON_ENABLED = Color3.fromRGB(80, 170, 90)
@@ -316,11 +317,13 @@ local function refreshChaos()
 		return
 	end
 	local threshold = snap.ActivationThreshold
-	local fraction = if snap.Active then 1 else math.clamp(snap.ChaosLevel / threshold, 0, 1)
+	local alarm = snap.Active or snap.Incoming == true
+	local fraction = if alarm then 1 else math.clamp(snap.ChaosLevel / threshold, 0, 1)
 	chaosBarFill.Size = UDim2.fromScale(fraction, 1)
-	chaosBarFill.BackgroundColor3 = if snap.Active then Color3.fromRGB(220, 60, 80) else Color3.fromRGB(170, 70, 190)
+	chaosBarFill.BackgroundColor3 = if alarm then Color3.fromRGB(220, 60, 80) else Color3.fromRGB(170, 70, 190)
 	chaosLabel.Text = if snap.Active
 		then TEXT.ChaosActive
+		elseif snap.Incoming == true then TEXT.ChaosIncoming
 		else string.format(
 			TEXT.ChaosLabel,
 			string.format("%.0f", math.floor(snap.ChaosLevel)),
@@ -351,6 +354,7 @@ local function isValidChaosSnapshot(value: unknown): boolean
 		and isFinite(candidate.ActivationThreshold)
 		and candidate.ActivationThreshold > 0
 		and type(candidate.Active) == "boolean"
+		and (candidate.Incoming == nil or type(candidate.Incoming) == "boolean")
 		and isFinite(candidate.BossHealth)
 		and isFinite(candidate.BossMaxHealth)
 		and candidate.BossMaxHealth > 0

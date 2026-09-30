@@ -20,7 +20,11 @@ local function test(name: string, run: () -> ())
 	table.insert(tests, { Name = name, Run = run })
 end
 
-local UI_MODULES = { "HUD", "ShopUI", "PetInventoryUI", "ChaosEventUI" }
+-- Модули со строками интерфейса: имя → путь (пространство ключей Loc — имя модуля).
+local UI_MODULES = { "HUD", "ShopUI", "PetInventoryUI", "ChaosEventUI", "PlayerEffects" }
+local UI_PATHS: { [string]: string } = {
+	PlayerEffects = "src/client/Visuals/PlayerEffects.luau",
+}
 local LOC_PATH = "src/shared/Loc"
 
 -- Исходник без \r: при core.autocrlf файлы в рабочей копии могут быть с CRLF.
@@ -29,7 +33,7 @@ local function readSource(path: string): string
 end
 
 local function uiSource(name: string): string
-	return readSource(`src/client/UI/{name}.luau`)
+	return readSource(UI_PATHS[name] or `src/client/UI/{name}.luau`)
 end
 
 -- Тело «local TEXT = { ... }» модуля.
@@ -46,7 +50,7 @@ local function placeholders(text: string): string
 	return table.concat(list, ",")
 end
 
-test("Все ключи Loc.Get из 4 UI-модулей есть в Loc.Strings с непустыми ru и en", function()
+test("Все ключи Loc.Get из UI-модулей есть в Loc.Strings с непустыми ru и en", function()
 	local loc = Harness.NewWorld():LoadModule(LOC_PATH)
 	local total = 0
 	for _, name in UI_MODULES do

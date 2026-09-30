@@ -44,4 +44,17 @@ function FragmentBuffer.Total(buffer: unknown): number?
 	return total
 end
 
+-- Копия буфера только из известных эмоций (лишние поля не утекают). nil — буфер повреждён
+-- (те же правила, что у Total).
+function FragmentBuffer.Copy(buffer: unknown): FragmentBuffer?
+	if FragmentBuffer.Total(buffer) == nil then
+		return nil
+	end
+	local copy: any = {}
+	for _, emotion in PetSpeciesConfig.EmotionTypes do
+		copy[emotion] = (buffer :: any)[emotion]
+	end
+	return copy
+end
+
 return FragmentBuffer

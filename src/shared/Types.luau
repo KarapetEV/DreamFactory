@@ -97,10 +97,12 @@ export type PlayerProfile = {
 -- Только данные самого игрока. Цены и значения эффектов клиент берёт из UpgradeConfig/UpgradeEffects.
 export type EconomySnapshot = {
 	Essence: number,
-	-- Буфер сырых фрагментов — СУММА по эмоциям Factory.RawFragments (разбивку клиент не
-	-- получает). Ёмкость клиент считает сам из
-	-- Levels.StorageCapacity через UpgradeEffects.
+	-- Буфер сырых фрагментов — СУММА по эмоциям Factory.RawFragments. Ёмкость клиент считает
+	-- сам из Levels.StorageCapacity через UpgradeEffects.
 	RawFragments: number,
+	-- Тот же буфер с разбивкой по эмоциям (визуал: цвета фрагментов на ленте фабрики).
+	-- Битый буфер — нули по всем эмоциям (RawFragments в этом случае тоже 0).
+	RawFragmentsByEmotion: FragmentBuffer,
 	-- Текущий уровень по id апгрейда (ключи UpgradeConfig).
 	Levels: { [string]: number },
 	-- Id апгрейда, если снимок — ответ сервера на PurchaseUpgrade (успешный или отклонённый).
@@ -148,6 +150,9 @@ export type ChaosEventResult = {
 export type ChaosSnapshot = {
 	ChaosLevel: number,
 	ActivationThreshold: number,
+	-- Порог достигнут, идёт телеграф появления босса (ChaosBossConfig.SpawnTelegraphDuration);
+	-- Active ещё false. Клиент показывает партиклы в BossPosition и затемняет небо.
+	Incoming: boolean,
 	Active: boolean,
 	BossHealth: number,
 	BossMaxHealth: number,

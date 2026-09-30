@@ -27,7 +27,7 @@
 	  ёмкость/скорость/радиус вычисляются из него на каждое обращение (UpgradeEffects).
 
 	Снимок для HUD (Remotes.EconomySnapshot, раздел 5.8):
-	- владельцу уходит только его Essence, RawFragments, уровни апгрейдов, прогресс rebirth
+	- владельцу уходит только его Essence, RawFragments (сумма и разбивка по эмоциям), уровни апгрейдов, прогресс rebirth
 	  (Count, ClarityMultiplier, CurrentBiome) и владение геймпассами — ничего о других игроках;
 	- на тике сравнивается с последним отправленным: первый снимок после загрузки профиля
 	  и смена уровней/прогресса rebirth — сразу, изменение только Essence/RawFragments — не
@@ -274,8 +274,9 @@ local function buildSnapshot(data: PlayerProfile, purchaseAck: string?, rebirthA
 	end
 	return {
 		Essence = data.Currency.Essence,
-		-- Клиенту — только сумма по типам (HUD без изменений); битый буфер — 0.
+		-- Сумма по типам (HUD) и разбивка (цвета фрагментов на ленте); битый буфер — 0 / нули.
 		RawFragments = FragmentBuffer.Total(data.Factory.RawFragments) or 0,
+		RawFragmentsByEmotion = FragmentBuffer.Copy(data.Factory.RawFragments) or FragmentBuffer.Empty(),
 		Levels = levels,
 		PurchaseAck = purchaseAck,
 		RebirthCount = if type(rebirth.Count) == "number" then rebirth.Count else 0,
@@ -289,6 +290,20 @@ end
 -- Равенство чисел, где NaN == NaN: битое значение не должно слаться на каждом тике.
 local function sameNumber(a: number, b: number): boolean
 	return a == b or (a ~= a and b ~= b)
+end
+
+-- Разбивка буфера совпадает по каждой эмоции (сбор и переработка в одном тике меняют её,
+-- не меняя суммы).
+local function sameBuffer(a: Types.FragmentBuffer, b: Types.FragmentBuffer?): boolean
+	if b == nil then
+		return false
+	end
+	for _, emotion in PetSpeciesConfig.EmotionTypes do
+		if not sameNumber((a :: any)[emotion], (b :: any)[emotion]) then
+			return false
+		end
+	end
+	return true
 end
 
 local function sendSnapshot(player: Player, state: PlayerState, snapshot: Types.EconomySnapshot, now: number)
@@ -343,6 +358,7 @@ local function syncSnapshot(player: Player, data: PlayerProfile, now: number)
 			and (
 				not sameNumber(snapshot.Essence, sent.Essence)
 				or not sameNumber(snapshot.RawFragments, sent.RawFragments)
+				or not sameBuffer(snapshot.RawFragmentsByEmotion, sent.RawFragmentsByEmotion)
 			)
 			and now - state.SentSnapshotAt >= FactoryConfig.SnapshotInterval
 		then

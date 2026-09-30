@@ -12,7 +12,9 @@
 	- каждое с "Joyful":
 	    level = max(level - JoyfulDecayPerEvent, 0);
 	- Nostalgic не влияет; во время боя события не меняют шкалу;
-	- level ≥ ActivationThreshold → старт ивента, по завершении level = 0.
+	- level ≥ ActivationThreshold → телеграф появления (SpawnTelegraphDuration секунд: шкала
+	  заморожена, клиенты видят партиклы/затемнение неба в BossPosition), затем старт ивента;
+	  по завершении level = 0.
 	Счёт — по событию (циклу конвейера), а не по amount: amount умножен на
 	ClarityMultiplier, и игрок с большим числом rebirth иначе в одиночку «заливал» бы шкалу.
 
@@ -31,6 +33,8 @@ export type ChaosBossDefinition = {
 	ActivationThreshold: number,
 	FearfulGainPerEvent: number,
 	JoyfulDecayPerEvent: number, -- «немного»: строго меньше FearfulGainPerEvent
+	-- Секунд между достижением порога и появлением босса (телеграф, GDD: 5–10 с).
+	SpawnTelegraphDuration: number,
 	-- Бой
 	BossMaxHealth: number,
 	EventDuration: number, -- секунд до таймаута ивента
@@ -60,6 +64,8 @@ local ChaosBossConfig: ChaosBossDefinition = {
 	ActivationThreshold = 500,
 	FearfulGainPerEvent = 1,
 	JoyfulDecayPerEvent = 0.25,
+
+	SpawnTelegraphDuration = 6,
 
 	BossMaxHealth = 1000,
 	EventDuration = 180,
@@ -99,6 +105,10 @@ do
 	assert(
 		c.JoyfulDecayPerEvent < c.FearfulGainPerEvent,
 		"ChaosBossConfig: JoyfulDecayPerEvent должен быть меньше FearfulGainPerEvent (Joyful лишь замедляет Хаос)"
+	)
+	assert(
+		isFinite(c.SpawnTelegraphDuration) and c.SpawnTelegraphDuration >= 5 and c.SpawnTelegraphDuration <= 10,
+		`ChaosBossConfig: SpawnTelegraphDuration должен быть в [5, 10] с, получено {c.SpawnTelegraphDuration}`
 	)
 	positive("BossMaxHealth", c.BossMaxHealth)
 	positive("EventDuration", c.EventDuration)

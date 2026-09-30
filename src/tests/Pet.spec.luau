@@ -426,6 +426,29 @@ test("Лимит слотов: геймпасс из GamePassesOwned добав�
 	assert(t.LastSnapshot().Snapshot.EquipSlots == slots)
 end)
 
+test("Визуал: атрибут EquippedPets — надетые петы в порядке инвентаря, обновляется на Equip/Unequip", function()
+	local t = setup()
+	hatchMany(t, 2)
+	local first, second = t.Data.Pets[1], t.Data.Pets[2]
+	assert(t.Player:GetAttribute("EquippedPets") == nil, "до первого пересчёта атрибута нет")
+
+	t.Equip(second.Id)
+	t.Equip(first.Id)
+	local expected = `{first.SpeciesId}:{first.Rarity}:{if first.Mutation then 1 else 0};`
+		.. `{second.SpeciesId}:{second.Rarity}:{if second.Mutation then 1 else 0}`
+	assert(t.Player:GetAttribute("EquippedPets") == expected, `атрибут: {t.Player:GetAttribute("EquippedPets")}`)
+
+	t.Unequip(first.Id)
+	t.Unequip(second.Id)
+	assert(t.Player:GetAttribute("EquippedPets") == "", "всё снято — пустая строка")
+
+	-- Отклонённый запрос атрибут не трогает.
+	t.Equip(first.Id)
+	local before = t.Player:GetAttribute("EquippedPets")
+	t.Equip("no-such-pet")
+	assert(t.Player:GetAttribute("EquippedPets") == before)
+end)
+
 test("Повторный EquipPet того же пета не занимает второй слот", function()
 	local t = setup()
 	hatchMany(t, 2)

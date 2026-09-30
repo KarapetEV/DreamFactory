@@ -8,7 +8,9 @@
 	- ServerChaosLevel — одна на сервер, только в памяти процесса (не в DataStore);
 	- растёт от FactorySystem.OnEssenceProduced(player, amount, emotionType) с "Fearful",
 	  падает от "Joyful" (подписка одна на весь сервер, сигнал общий для всех игроков);
-	- во время боя шкала заморожена; при достижении порога — старт ивента.
+	- при достижении порога — телеграф: Incoming = true на SpawnTelegraphDuration секунд
+	  (снимок уходит сразу, клиенты играют партиклы/затемнение неба), затем старт ивента;
+	- во время телеграфа и боя шкала заморожена; удар в телеграфе — «no-event».
 
 	Бой:
 	- босс — анкеренный Part-плейсхолдер в Workspace (атрибуты Health/MaxHealth — для
@@ -61,6 +63,7 @@ export type Outcome = "Victory" | "Timeout"
 export type ChaosState = {
 	ChaosLevel: number,
 	ActivationThreshold: number,
+	Incoming: boolean, -- идёт телеграф появления босса
 	Active: boolean,
 	BossHealth: number,
 	BossMaxHealth: number,
@@ -94,6 +97,7 @@ ChaosBossSystem.OnEventEnded = Signal.new()
 ChaosBossSystem.OnBossHit = Signal.new()
 
 local chaosLevel = 0
+local incoming = false -- телеграф: порог достигнут, босс появится через SpawnTelegraphDuration
 local active = false
 local bossHealth = 0
 local eventId = 0
@@ -162,6 +166,7 @@ local function buildSnapshot(userId: number, ended: Types.ChaosEventResult?): Ty
 	return {
 		ChaosLevel = chaosLevel,
 		ActivationThreshold = ChaosBossConfig.ActivationThreshold,
+		Incoming = incoming,
 		Active = active,
 		BossHealth = bossHealth,
 		BossMaxHealth = ChaosBossConfig.BossMaxHealth,
@@ -315,8 +320,27 @@ local function startEvent()
 	ChaosBossSystem.OnEventStarted:Fire(startedId)
 end
 
+-- Телеграф: снимок с Incoming — сразу, старт ивента — через SpawnTelegraphDuration.
+local function beginTelegraph()
+	incoming = true
+	broadcastNow(nil)
+	task.delay(ChaosBossConfig.SpawnTelegraphDuration, function()
+		if not incoming then
+			return
+		end
+		incoming = false
+		-- Старт рассылает сам, сразу. Если создание босса бросило — шкала осталась на пороге
+		-- (следующий Fearful начнёт телеграф заново), клиенты должны увидеть отмену Incoming.
+		local ok, err = pcall(startEvent)
+		if not ok then
+			warn(`[ChaosBossSystem] Не удалось начать ивент: {err}`)
+			markDirty()
+		end
+	end)
+end
+
 local function onEssenceProduced(_player: Player, _amount: number, emotionType: unknown)
-	if active then
+	if active or incoming then
 		return
 	end
 
@@ -330,13 +354,7 @@ local function onEssenceProduced(_player: Player, _amount: number, emotionType: 
 	end
 
 	if chaosLevel >= ChaosBossConfig.ActivationThreshold then
-		-- Старт рассылает сам, сразу. Если создание босса бросило — шкала всё равно
-		-- изменилась: клиенты должны её увидеть.
-		local ok, err = pcall(startEvent)
-		if not ok then
-			warn(`[ChaosBossSystem] Не удалось начать ивент: {err}`)
-			markDirty()
-		end
+		beginTelegraph()
 	elseif chaosLevel ~= previous then
 		markDirty()
 	end
@@ -426,6 +444,7 @@ function ChaosBossSystem.GetState(): ChaosState
 	return {
 		ChaosLevel = chaosLevel,
 		ActivationThreshold = ChaosBossConfig.ActivationThreshold,
+		Incoming = incoming,
 		Active = active,
 		BossHealth = bossHealth,
 		BossMaxHealth = ChaosBossConfig.BossMaxHealth,

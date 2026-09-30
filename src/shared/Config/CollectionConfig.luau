@@ -23,7 +23,6 @@ export type CollectionDefinition = {
 	MaxRequestsPerWindow: number,
 	-- Сколько отклонённых запросов в окне считается подозрительной активностью (пишется в лог).
 	SuspiciousRejectThreshold: number,
-	PromptText: string, -- подсказка над фрагментом (клиент показывает как есть)
 	Zones: { ZoneDefinition },
 }
 
@@ -35,7 +34,6 @@ local CollectionConfig: CollectionDefinition = {
 	RequestWindow = 1,
 	MaxRequestsPerWindow = 10,
 	SuspiciousRejectThreshold = 30,
-	PromptText = "Собрать",
 	Zones = {
 		{
 			Id = "DreamMeadowZone1",

@@ -120,7 +120,7 @@ test("BiomeConfig: LucidDreams описан, порог и бонус монот
 	)
 	assert(biomes.Nightmares.ClarityMultiplierBonus > biomes.DreamMeadow.ClarityMultiplierBonus, "Nightmares больше DreamMeadow")
 
-	assert(lucid.FragmentColor.R and lucid.FragmentColor.G and lucid.FragmentColor.B, "у LucidDreams есть цвет фрагмента")
+	assert(lucid.AccentColor.R and lucid.AccentColor.G and lucid.AccentColor.B, "у LucidDreams есть цвет-акцент")
 end)
 
 test("BiomeConfig: пороги всех биомов уникальны, ровно один с порогом 0 (load-time assert не сломан)", function()
@@ -232,20 +232,22 @@ test("Сбор: фрагменты из зон Nightmares и LucidDreams соб�
 	assert(byRange.LucidDreams[1].Destroyed)
 end)
 
-test("Спавн: цвет фрагмента берётся из BiomeConfig[zone.BiomeId].FragmentColor", function()
+test("Спавн: цвет фрагмента — по эмоции (VisualConfig.EmotionColors), биом зоны — атрибутом", function()
 	local t = collectionSetup()
-	local biomes = t.World:LoadModule("src/shared/Config/BiomeConfig")
+	local visual = t.World:LoadModule("src/shared/Config/VisualConfig")
 	t.Collection.Init()
 
 	local seenColors = { DreamMeadow = false, Nightmares = false, LucidDreams = false }
 	for _, fragment in t.Fragments() do
 		local z = fragment.Position.Z
 		local biomeId = if z < 100 then "DreamMeadow" elseif z < 200 then "Nightmares" else "LucidDreams"
-		local expected = biomes[biomeId].FragmentColor
+		local emotion = fragment:GetAttribute("FragmentEmotion")
+		local expected = assert(visual.EmotionColors[emotion], `у фрагмента нет эмоции: {emotion}`)
 		assert(
 			fragment.Color.R == expected.R and fragment.Color.G == expected.G and fragment.Color.B == expected.B,
-			`{biomeId}: цвет фрагмента не совпадает с FragmentColor`
+			`{biomeId}: цвет фрагмента не совпадает с EmotionColors.{emotion}`
 		)
+		assert(fragment:GetAttribute("FragmentBiome") == biomeId, `{biomeId}: атрибут биома`)
 		seenColors[biomeId] = true
 	end
 	assert(seenColors.DreamMeadow and seenColors.Nightmares and seenColors.LucidDreams, "проверены фрагменты всех трёх биомов")

@@ -30,6 +30,10 @@
 	  только при загрузке профиля и успешном EquipPet/UnequipPet. FactorySystem и
 	  CollectionSystem читают кэш через GetCachedBonuses; нет кэша или он битый — 1.0.
 
+	Визуал: вместе с кэшем бонусов на игрока пишется атрибут Attributes.EquippedPets
+	(EquippedPetsCodec) — те же петы, что дают бонус. По нему клиенты всех игроков рисуют
+	петов, следующих за владельцем. Только отображение: бонусы атрибут не читают.
+
 	Ответ (Remotes.PetSnapshot): на каждый запрос, прошедший rate limit, — снимок с Ack;
 	плюс полный снимок после загрузки профиля. Только собственные данные игрока. На отказ
 	список петов не шлём (Pets = nil): состав не изменился, а полный инвентарь в ответ на
@@ -45,6 +49,8 @@ local Remotes = require(ReplicatedStorage.shared.Remotes)
 local Signal = require(ReplicatedStorage.shared.Signal)
 local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
 local OddsText = require(ReplicatedStorage.shared.OddsText)
+local Attributes = require(ReplicatedStorage.shared.Attributes)
+local EquippedPetsCodec = require(ReplicatedStorage.shared.EquippedPetsCodec)
 local CocoonConfig = require(ReplicatedStorage.shared.Config.CocoonConfig)
 local PetConfig = require(ReplicatedStorage.shared.Config.PetConfig)
 local PetSpeciesConfig = require(ReplicatedStorage.shared.Config.PetSpeciesConfig)
@@ -346,6 +352,12 @@ local function refreshBonuses(player: Player, data: PlayerProfile)
 		bonusCache[player] = nil
 		reportCorruption(player, `ошибка расчёта бонусов петов: {if ok then "некорректный результат" else result}`)
 	end
+
+	-- Битые данные — пустой список петов на экране, а не ошибка пересчёта.
+	local encodedOk, encoded = pcall(function()
+		return EquippedPetsCodec.Encode(data.Pets, PetSystem.GetEquipSlots(data))
+	end)
+	player:SetAttribute(Attributes.EquippedPets, if encodedOk then encoded else "")
 end
 
 -- Пересчитать кэш бонусов вне Equip/Unequip — для будущей синхронизации геймпассов

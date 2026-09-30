@@ -18,3 +18,6 @@ require(Systems.ChaosBossSystem).Init()
 require(Systems.PvPRaidSystem).Init()
 require(Systems.BattlePassSystem).Init()
 require(Systems.MonetizationSystem).Init()
+
+-- Визуал: Terrain-декор биомов (геймплей от него не зависит).
+require(Services.WorldDecor).Init()

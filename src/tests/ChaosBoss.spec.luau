@@ -187,10 +187,19 @@ local function setup(configPatch: { [string]: any }?, beforeInit: ((world: any) 
 		end
 	end
 
-	-- Довести шкалу до порога — старт ивента.
-	function t.StartEvent()
+	-- Довести шкалу до порога — телеграф появления босса (босса ещё нет).
+	function t.ReachThreshold()
 		t.Produce("Fearful", math.ceil(config.ActivationThreshold / config.FearfulGainPerEvent))
-		assert(system.GetState().Active, "ивент стартовал")
+		local state = system.GetState()
+		assert(state.Incoming and not state.Active, "телеграф начался, ивента ещё нет")
+	end
+
+	-- Порог + телеграф целиком — старт ивента.
+	function t.StartEvent()
+		t.ReachThreshold()
+		world:Advance(config.SpawnTelegraphDuration)
+		local state = system.GetState()
+		assert(state.Active and not state.Incoming, "ивент стартовал")
 	end
 
 	function t.Attack(player)
@@ -248,21 +257,75 @@ test("Joyful не уводит шкалу ниже нуля; мусорный em
 	assert(t.System.GetState().ChaosLevel == 0 and not t.System.GetState().Active)
 end)
 
-test("При достижении порога спавнится босс с полным HP", function()
+test("При достижении порога — телеграф, через SpawnTelegraphDuration спавнится босс с полным HP", function()
 	local t = setup()
 	local c = t.Config
+	local started = {}
+	t.System.OnEventStarted:Connect(function(id)
+		table.insert(started, id)
+	end)
 	local needed = math.ceil(c.ActivationThreshold / c.FearfulGainPerEvent)
 	t.Produce("Fearful", needed - 1)
-	assert(not t.System.GetState().Active, "до порога — нет ивента")
+	assert(not t.System.GetState().Active and not t.System.GetState().Incoming, "до порога — нет ивента")
 	assert(#t.BossParts() == 0)
 
 	t.Produce("Fearful")
+	assert(t.System.GetState().Incoming and not t.System.GetState().Active, "телеграф")
+	assert(#t.BossParts() == 0 and #started == 0, "босса ещё нет")
+
+	t.World:Advance(c.SpawnTelegraphDuration - 0.01)
+	assert(#t.BossParts() == 0, "до конца телеграфа босса нет")
+	t.World:Advance(0.02)
 	local state = t.System.GetState()
-	assert(state.Active, "ивент активен")
+	assert(state.Active and not state.Incoming, "ивент активен")
+	assert(#started == 1, "OnEventStarted — после телеграфа")
 	assert(state.BossHealth == c.BossMaxHealth, "полное HP")
 	local parts = t.BossParts()
 	assert(#parts == 1, `один босс, найдено {#parts}`)
 	assert(parts[1].Anchored and parts[1]:GetAttribute("Health") == c.BossMaxHealth)
+end)
+
+test("Телеграф: снимок с Incoming уходит всем сразу; шкала заморожена; удар — no-event", function()
+	local t = setup()
+	local c = t.Config
+	local p = t.AddPlayer(1, 5)
+	t.ClearSent()
+	t.ReachThreshold()
+	local snap = t.LastTo(1)
+	assert(snap and snap.Incoming == true and snap.Active == false, "клиент сразу знает о телеграфе")
+
+	local level = t.System.GetState().ChaosLevel
+	t.Produce("Joyful", 50)
+	t.Produce("Fearful", 50)
+	assert(t.System.GetState().ChaosLevel == level, "шкала заморожена на время телеграфа")
+
+	t.Attack(p)
+	assert(t.System.GetContribution(1) == 0 and t.System.GetState().BossHealth == 0, "бить некого")
+
+	t.World:Advance(c.SpawnTelegraphDuration)
+	local started = t.LastTo(1)
+	assert(started.Active == true and started.Incoming == false, "старт — снимок без Incoming")
+	t.Cooldown()
+	t.Attack(p)
+	assert(t.System.GetContribution(1) == c.DamagePerHit, "после появления удар проходит")
+end)
+
+test("Телеграф: ошибка создания босса снимает Incoming, следующий Fearful начинает телеграф снова", function()
+	local t = setup()
+	t.AddPlayer(1)
+	t.ReachThreshold()
+	t.World.FailInstanceNew = true
+	t.World:Advance(t.Config.SpawnTelegraphDuration)
+	t.World.FailInstanceNew = false
+	local state = t.System.GetState()
+	assert(not state.Active and not state.Incoming, "ивент не начался, телеграф снят")
+	assert(state.ChaosLevel == t.Config.ActivationThreshold, "шкала осталась на пороге")
+	assert(t.LastTo(1).Incoming == false, "клиенты увидели отмену телеграфа")
+
+	t.Produce("Fearful")
+	assert(t.System.GetState().Incoming, "новый телеграф")
+	t.World:Advance(t.Config.SpawnTelegraphDuration)
+	assert(t.System.GetState().Active, "со второй попытки босс появился")
 end)
 
 test("Во время боя шкала заморожена, второй босс не спавнится", function()
@@ -835,6 +898,9 @@ test("ChaosBossConfig: некорректные значения роняют з
 		{ "JoyfulDecayPerEvent = 0.25", "JoyfulDecayPerEvent = 2" },
 		{ "DamagePerHit = 10", "DamagePerHit = 0/0" },
 		{ "VictoryRewardMultiplier = 1.5", "VictoryRewardMultiplier = 0.5" },
+		-- Телеграф появления — 5–10 с (короче — игрок не успевает заметить, длиннее — затянуто).
+		{ "SpawnTelegraphDuration = 6", "SpawnTelegraphDuration = 2" },
+		{ "SpawnTelegraphDuration = 6", "SpawnTelegraphDuration = 15" },
 	}
 	local fs = require("@lune/fs")
 	local luau = require("@lune/luau")

@@ -248,7 +248,9 @@ test("Спавн: тип из серверного Random, сбор кладёт
 		end
 		t.Collection.Init()
 		local fragment = assert(t.Fragments()[1], "фрагмент заспавнен")
-		assert(fragment:GetAttribute("EmotionType") == nil, "тип клиенту не публикуется")
+		-- Тип публикуется атрибутом только для визуала; сбор берёт его из серверного реестра.
+		assert(fragment:GetAttribute("FragmentEmotion") == case[2], "атрибут визуала совпадает с типом в реестре")
+		fragment:SetAttribute("FragmentEmotion", "Joyful") -- подмена атрибута ничего не меняет
 		t.Collect(fragment)
 		for _, emotion in EMOTIONS do
 			local expected = if emotion == case[2] then 1 else 0
@@ -337,16 +339,51 @@ test("Миграция v5 → v6: битое число не превращае�
 	assert(reported, "порча записана в лог")
 end)
 
-test("EconomySnapshot.RawFragments — сумма по типам; битый буфер — 0", function()
+test("EconomySnapshot: RawFragments — сумма по типам, RawFragmentsByEmotion — разбивка; битый буфер — 0/нули", function()
 	local t = factorySetup()
 	t.Data.Factory.RawFragments = buffer(2, 3, 4)
+	t.Data.Factory.RawFragments.Extra = 99 -- лишнее поле профиля клиенту не уходит
 	t.Factory.PushSnapshot(t.Player)
-	assert(t.Snapshots[#t.Snapshots].RawFragments == 9, `сумма {t.Snapshots[#t.Snapshots].RawFragments}`)
-	assert(type(t.Snapshots[#t.Snapshots].RawFragments) == "number", "клиенту — число, не разбивка")
+	local snap = t.Snapshots[#t.Snapshots]
+	assert(snap.RawFragments == 9, `сумма {snap.RawFragments}`)
+	local by = snap.RawFragmentsByEmotion
+	assert(by.Joyful == 2 and by.Nostalgic == 3 and by.Fearful == 4, "разбивка как в профиле")
+	assert(by.Extra == nil, "только известные эмоции")
+	assert(by ~= t.Data.Factory.RawFragments, "копия, не ссылка на профиль")
 
 	t.Data.Factory.RawFragments = buffer(1, 0 / 0, 0)
 	t.Factory.PushSnapshot(t.Player)
-	assert(t.Snapshots[#t.Snapshots].RawFragments == 0)
+	snap = t.Snapshots[#t.Snapshots]
+	assert(snap.RawFragments == 0)
+	assert(snap.RawFragmentsByEmotion.Joyful == 0 and snap.RawFragmentsByEmotion.Nostalgic == 0, "битый буфер — нули")
+end)
+
+test("EconomySnapshot: смена разбивки при той же сумме тоже доходит до клиента (цвета ленты)", function()
+	-- Конвейер практически остановлен (множитель скорости петов ~0): снимки меняются только
+	-- от наших правок буфера — как при сборе Fearful и переработке Joyful между тиками.
+	local t = factorySetup({
+		["src/server/Systems/PetSystem"] = {
+			GetCachedBonuses = function()
+				return { ConveyorSpeedMultiplier = 1e-9, CollectionRadiusMultiplier = 1 }
+			end,
+		},
+	})
+	t.Data.Factory.RawFragments = buffer(1, 0, 0)
+	t.World:Advance(5) -- первый снимок и его повтор
+	local count = #t.Snapshots
+	assert(t.Snapshots[count].RawFragmentsByEmotion.Joyful == 1)
+
+	t.Data.Factory.RawFragments = buffer(0, 0, 1) -- сумма та же (1), состав другой
+	t.World:Advance(1)
+	assert(#t.Snapshots > count, "снимок с новой разбивкой отправлен")
+	local last = t.Snapshots[#t.Snapshots]
+	assert(last.RawFragments == 1, "сумма не менялась")
+	assert(last.RawFragmentsByEmotion.Joyful == 0 and last.RawFragmentsByEmotion.Fearful == 1, "актуальная разбивка")
+	assert(#t.Produced == 0, "конвейер в тесте не работал")
+
+	count = #t.Snapshots
+	t.World:Advance(2)
+	assert(#t.Snapshots == count, "без изменений — без лишних снимков")
 end)
 
 ------------------------------------------------------------------------------------------

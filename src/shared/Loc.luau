@@ -40,6 +40,7 @@ Loc.Strings = {
 	["HUD.Pending"] = { ru = "...", en = "..." },
 	["HUD.ChaosLabel"] = { ru = "Хаос: %s / %s", en = "Chaos: %s / %s" },
 	["HUD.ChaosActive"] = { ru = "Вторжение Кошмара!", en = "Nightmare Invasion!" },
+	["HUD.ChaosIncoming"] = { ru = "Кошмар приближается...", en = "A Nightmare approaches..." },
 
 	-- ShopUI
 	["ShopUI.Title"] = { ru = "Магазин", en = "Shop" },
@@ -77,6 +78,8 @@ Loc.Strings = {
 	["PetInventoryUI.Denied"] = { ru = "Запрос отклонён сервером", en = "Request denied by server" },
 	["PetInventoryUI.Pet"] = { ru = "%s · %s · %s", en = "%s · %s · %s" },
 
+	-- PlayerEffects (Visuals)
+	["PlayerEffects.Raided"] = { ru = "Вторжение в ваш сон!", en = "Your dream is being invaded!" },
 	-- ChaosEventUI
 	["ChaosEventUI.Title"] = { ru = "Вторжение Кошмара", en = "Nightmare Invasion" },
 	["ChaosEventUI.Health"] = { ru = "%s / %s", en = "%s / %s" },

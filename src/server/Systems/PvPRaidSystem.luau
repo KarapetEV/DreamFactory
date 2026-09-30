@@ -43,6 +43,11 @@
 
 	После успешного рейда — FactorySystem.PushSnapshot обоим (каждый в своём pcall) и
 	OnRaidCompleted. На отказ клиенту ничего не шлётся (UI рейда — отдельная сессия).
+
+	Визуал (без новых ремоут): атрибуты игрока Attributes.ShieldExpiresAt (os.time() конца
+	щита, nil — щита нет; видимая всем аура) и Attributes.RaidedCount (+1 у цели на каждый
+	успешный рейд; клиент цели показывает виньетку). Только отображение: проверки щита
+	читают профиль, не атрибут.
 ]]
 
 local Players = game:GetService("Players")
@@ -53,6 +58,7 @@ local Types = require(ReplicatedStorage.shared.Types)
 local Remotes = require(ReplicatedStorage.shared.Remotes)
 local Signal = require(ReplicatedStorage.shared.Signal)
 local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
+local Attributes = require(ReplicatedStorage.shared.Attributes)
 local PvPConfig = require(ReplicatedStorage.shared.Config.PvPConfig)
 local GuardConfig = require(ReplicatedStorage.shared.Config.GuardConfig)
 local DataSystem = require(script.Parent.DataSystem)
@@ -437,6 +443,8 @@ local function onRequestRaidStart(player: Player, targetUserId: unknown)
 	end
 
 	-- Перенос уже в обоих профилях: ошибки снимков/подписчиков его не отменяют.
+	player:SetAttribute(Attributes.ShieldExpiresAt, nil) -- напавший потерял щит (tryRaid)
+	target:SetAttribute(Attributes.RaidedCount, (tonumber(target:GetAttribute(Attributes.RaidedCount)) or 0) + 1)
 	pushSnapshot(player)
 	pushSnapshot(target)
 	AnalyticsSystem.LogEvent(player, AnalyticsSystem.Events.PvPRaid, stolen)
@@ -453,9 +461,11 @@ local function applyJoinShield(player: Player, data: PlayerProfile)
 	local expiresAt = os.time() + PvPConfig.ShieldDuration
 	local current = pvp.ShieldExpiresAt
 	if isFinite(current) and current > expiresAt then
+		player:SetAttribute(Attributes.ShieldExpiresAt, current)
 		return
 	end
 	pvp.ShieldExpiresAt = expiresAt
+	player:SetAttribute(Attributes.ShieldExpiresAt, expiresAt)
 end
 
 local function onPlayerAdded(player: Player)

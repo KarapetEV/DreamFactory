@@ -244,11 +244,19 @@ end
 
 function World:NewPlayer(userId: number?): Player
 	local handlers = {}
+	-- Атрибуты игрока (визуал: надетые петы, щит, счётчик рейдов) — читаются тестами через GetAttribute.
+	local attributes = {}
 	return {
 		UserId = userId or 42,
 		Name = "TestPlayer",
 		Parent = true,
 		Character = nil,
+		SetAttribute = function(_self: any, key: string, value: any)
+			attributes[key] = value
+		end,
+		GetAttribute = function(_self: any, key: string): any
+			return attributes[key]
+		end,
 		-- Подписчики Player.CharacterAdded: событие срабатывает только через world:SpawnCharacter.
 		CharacterAdded = {
 			_handlers = handlers,
@@ -493,6 +501,10 @@ function World:_makeEnv(moduleCache: { [string]: any }, scriptPath: string?): { 
 	}
 	env.Instance = {
 		new = function(className: string)
+			-- world.FailInstanceNew = true — имитация сбоя создания инстанса (например, босса).
+			if world.FailInstanceNew then
+				error(`Harness: Instance.new("{className}") отказал`, 0)
+			end
 			local attributes = {}
 			local instance = {
 				ClassName = className,

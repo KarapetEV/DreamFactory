@@ -19,9 +19,13 @@
 	  общий с ручным сбором кулдаун. Клиент в этом пути не участвует; каждый игрок обрабатывается
 	  в своём pcall — битый профиль одного не останавливает тик для остальных.
 	- Эмоциональный тип фрагмента (GDD раздел 3) выбирает сервер при спавне по весам
-	  FragmentEmotionConfig.SpawnWeights (серверный Random). Тип хранится только в серверном
-	  реестре; при сборе фрагмент ложится в Factory.RawFragments[тип]. Ёмкость склада
+	  FragmentEmotionConfig.SpawnWeights (серверный Random). При сборе фрагмент ложится в
+	  Factory.RawFragments[тип] — тип берётся из серверного реестра. Ёмкость склада
 	  ограничивает сумму по типам (FragmentBuffer.Total); битый буфер — отказ без записи.
+	- Визуал: тип — основной видимый сигнал фрагмента. Part красится в
+	  VisualConfig.EmotionColors[тип], тип и биом зоны выставляются атрибутами
+	  (Attributes.FragmentEmotion/FragmentBiome) — клиент строит по ним кристалл и частицы.
+	  Атрибуты только для отображения: сбор их не читает, подмена на клиенте ничего не даёт.
 ]]
 
 local Players = game:GetService("Players")
@@ -35,7 +39,9 @@ local CollectionConfig = require(ReplicatedStorage.shared.Config.CollectionConfi
 local AutoCollectorConfig = require(ReplicatedStorage.shared.Config.AutoCollectorConfig)
 local FragmentEmotionConfig = require(ReplicatedStorage.shared.Config.FragmentEmotionConfig)
 local PetSpeciesConfig = require(ReplicatedStorage.shared.Config.PetSpeciesConfig)
+local VisualConfig = require(ReplicatedStorage.shared.Config.VisualConfig)
 local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
+local Attributes = require(ReplicatedStorage.shared.Attributes)
 local FragmentBuffer = require(ReplicatedStorage.shared.FragmentBuffer)
 local DataSystem = require(script.Parent.DataSystem)
 local PetSystem = require(script.Parent.PetSystem)
@@ -52,7 +58,7 @@ type Fragment = {
 	Position: Vector3,
 	ZoneId: string,
 	PointIndex: number,
-	EmotionType: EmotionType, -- выбран сервером при спавне, клиенту не передаётся
+	EmotionType: EmotionType, -- выбран сервером при спавне; клиенту — только атрибутом для визуала
 }
 
 type PlayerState = {
@@ -146,34 +152,24 @@ local function removeFragment(fragment: Fragment)
 	fragment.Part:Destroy()
 end
 
-local function createFragmentPart(id: number, position: Vector3, color: Color3): Part
+-- Part — хитбокс касания и запасной визуал (шар цвета эмоции), если клиентский кристалл
+-- (Visuals/FragmentVisuals) ещё не построен.
+local function createFragmentPart(id: number, position: Vector3, emotionType: EmotionType, biomeId: string): Part
 	local part = Instance.new("Part")
 	part.Name = `DreamFragment_{id}`
 	part.Shape = Enum.PartType.Ball
 	part.Size = Vector3.new(2, 2, 2)
 	part.Material = Enum.Material.Neon
-	part.Color = color
+	part.Color = VisualConfig.EmotionColors[emotionType]
 	part.Anchored = true
 	part.CanCollide = false
 	part.CanTouch = false
 	part.Position = position
 	part:SetAttribute(ID_ATTRIBUTE, id)
-
-	local gui = Instance.new("BillboardGui")
-	gui.Size = UDim2.fromOffset(100, 30)
-	gui.StudsOffset = Vector3.new(0, 2.5, 0)
-	gui.AlwaysOnTop = true
-	gui.Parent = part
-
-	local label = Instance.new("TextLabel")
-	label.Size = UDim2.fromScale(1, 1)
-	label.BackgroundTransparency = 1
-	label.Text = CollectionConfig.PromptText
-	label.TextColor3 = Color3.new(1, 1, 1)
-	label.TextStrokeTransparency = 0.5
-	label.TextScaled = true
-	label.Parent = gui
-
+	part:SetAttribute(Attributes.FragmentEmotion, emotionType)
+	part:SetAttribute(Attributes.FragmentBiome, biomeId)
+	-- Подписи над фрагментом нет: сбор — касанием (CollectionController), сигнал «можно
+	-- собрать» — сам светящийся кристалл с частицами.
 	return part
 end
 
@@ -195,14 +191,15 @@ local function spawnFragmentInZone(zone: CollectionConfig.ZoneDefinition, folder
 	local id = nextFragmentId
 	nextFragmentId += 1
 
-	local part = createFragmentPart(id, position, BiomeConfig[zone.BiomeId].FragmentColor)
+	local emotionType = CollectionSystem.RollEmotionType(rng:NextNumber())
+	local part = createFragmentPart(id, position, emotionType, zone.BiomeId)
 	fragments[id] = {
 		Id = id,
 		Part = part,
 		Position = position,
 		ZoneId = zone.Id,
 		PointIndex = pointIndex,
-		EmotionType = CollectionSystem.RollEmotionType(rng:NextNumber()),
+		EmotionType = emotionType,
 	}
 	occupied[pointIndex] = true
 	zoneCounts[zone.Id] += 1

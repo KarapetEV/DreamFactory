@@ -288,6 +288,7 @@ test("Щит входа не укорачивает более длинный у
 	table.insert(world.Players, player)
 	world:FirePlayerAdded(player)
 	assert(data.PvP.ShieldExpiresAt == long)
+	assert(player:GetAttribute("ShieldExpiresAt") == long, "аура показывает действующий длинный щит")
 end)
 
 test("Успешный рейд снимает щит атакующего", function()
@@ -298,6 +299,23 @@ test("Успешный рейд снимает щит атакующего", fun
 	t.RaidAt(attacker, 2)
 	assert(#t.Completed == 1)
 	assert(a.PvP.ShieldExpiresAt == nil, "щит снят")
+end)
+
+test("Визуал: атрибуты ShieldExpiresAt (вход/снятие) и RaidedCount (+1 цели за успешный рейд)", function()
+	local t = setup()
+	local attacker, a = t.Join(1, 0, true)
+	local target = t.Join(2, 10_000)
+	assert(attacker:GetAttribute("ShieldExpiresAt") == a.PvP.ShieldExpiresAt, "аура щита = щит профиля")
+	assert(target:GetAttribute("RaidedCount") == nil)
+
+	t.RaidAt(attacker, 2)
+	assert(#t.Completed == 1)
+	assert(attacker:GetAttribute("ShieldExpiresAt") == nil, "напавший потерял ауру щита")
+	assert(target:GetAttribute("RaidedCount") == 1, "цель видит виньетку рейда")
+
+	-- Отказ (grace цели) счётчик не двигает.
+	t.RaidAt(attacker, 2)
+	assert(#t.Completed == 1 and target:GetAttribute("RaidedCount") == 1)
 end)
 
 test("Отказанный рейд щит атакующего не трогает", function()

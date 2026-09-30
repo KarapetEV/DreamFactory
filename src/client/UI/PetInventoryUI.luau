@@ -13,6 +13,8 @@
 	  Ответ приходит всегда, кроме отброшенного rate limit'ом запроса — тогда кнопки
 	  разблокирует таймаут.
 	- Кнопка меню приходит от HUD (AddMenuButton), как у ShopUI.
+	- Успешный HatchCocoon (снимок с HatchedPetId) — сигнал Hatched(pet): по нему
+	  Visuals/CocoonEffect играет раскрытие кокона. Пет берётся из снимка сервера.
 ]]
 
 local Players = game:GetService("Players")
@@ -21,6 +23,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Types = require(ReplicatedStorage.shared.Types)
 local Loc = require(ReplicatedStorage.shared.Loc)
 local Remotes = require(ReplicatedStorage.shared.Remotes)
+local Signal = require(ReplicatedStorage.shared.Signal)
 local CocoonConfig = require(ReplicatedStorage.shared.Config.CocoonConfig)
 local PetConfig = require(ReplicatedStorage.shared.Config.PetConfig)
 local PetSpeciesConfig = require(ReplicatedStorage.shared.Config.PetSpeciesConfig)
@@ -68,6 +71,9 @@ type Row = {
 }
 
 local PetInventoryUI = {}
+
+-- (pet: PetRecord) — сервер подтвердил вылупление (ответ HatchCocoon с HatchedPetId).
+PetInventoryUI.Hatched = Signal.new()
 
 local source: SnapshotSource
 local gui: ScreenGui
@@ -340,6 +346,7 @@ local function onPetSnapshot(value: unknown)
 			if hatched then
 				local name = speciesInfo(hatched)
 				showStatus(string.format(TEXT.Hatched, name, hatched.Rarity))
+				PetInventoryUI.Hatched:Fire(hatched)
 			end
 		end
 	end

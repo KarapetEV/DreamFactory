@@ -14,7 +14,9 @@
 -- Смысл Value по типам:
 --   ConveyorSpeed    — задержка конвейера, секунд на один цикл переработки (меньше = быстрее);
 --   StorageCapacity  — ёмкость буфера сырых фрагментов (Factory.RawFragments);
---   CollectionRadius — радиус сбора фрагментов, studs;
+--   CollectionRadius — СНЯТ С ПРОДАЖИ (Retired): радиус сбора теперь фиксированный
+--                      (AutoCollectorConfig.Radius × Nostalgic-петы). Трек оставлен ради уже
+--                      купленных уровней в профиле (Collection.RadiusLevel), но ничего не меняет;
 --   CollectionSpeed  — кулдаун между успешными сборами, секунд (меньше = быстрее).
 
 export type UpgradeEffectType = "ConveyorSpeed" | "StorageCapacity" | "CollectionRadius" | "CollectionSpeed"
@@ -30,6 +32,8 @@ export type UpgradeTrack = {
 	BaseValue: number,
 	MaxLevel: number,
 	Levels: { UpgradeLevel },
+	-- true — снят с продажи: FactorySystem отклоняет покупку, HUD не показывает.
+	Retired: boolean?,
 }
 
 local UpgradeConfig: { [string]: UpgradeTrack } = {
@@ -62,6 +66,7 @@ local UpgradeConfig: { [string]: UpgradeTrack } = {
 	CollectionRadius = {
 		Id = "CollectionRadius",
 		DisplayName = "Радиус сбора",
+		Retired = true,
 		BaseValue = 12,
 		MaxLevel = 5,
 		Levels = {

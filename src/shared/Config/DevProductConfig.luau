@@ -11,7 +11,9 @@
 
 	В S12 — паки Эссенции; в S18 — премиум-ветка сезонного пропуска (Reward.Kind
 	"BattlePassPremium": выдачу делает BattlePassSystem.ApplyPremium через тот же
-	идемпотентный ProcessReceipt). «Быстрое пробуждение», реролл мутаций, косметика и
+	идемпотентный ProcessReceipt); временные баффы Magnet Boost / Speed Boost (Reward.Kind "Buff":
+	BuffSystem.Grant продлевает Buffs.<Id>ExpiresAt, параметры баффа — BuffConfig). «Быстрое
+	пробуждение», реролл мутаций, косметика и
 	кокон-паки — отдельные сессии (новый Reward.Kind + ветка выдачи в MonetizationSystem).
 
 	Ориентир цены в Robux (для заведения продукта в Creator Dashboard): S 49, M 149, L 349,
@@ -20,14 +22,17 @@
 ]]
 
 local UpgradeEffects = require(script.Parent.Parent.UpgradeEffects)
+local BuffConfig = require(script.Parent.BuffConfig)
 
-export type RewardKind = "Essence" | "BattlePassPremium"
+export type RewardKind = "Essence" | "BattlePassPremium" | "Buff"
 
 export type DevProductReward = {
 	Kind: RewardKind,
 	-- Для "Essence" — сколько начислить в Currency.Essence. Для "BattlePassPremium" — nil:
 	-- награды премиум-ветки берутся из BattlePassConfig.PremiumRewards.
 	Amount: number?,
+	-- Для "Buff" — какой бафф выдать (длительность и эффект — BuffConfig). Иначе nil.
+	BuffId: BuffConfig.BuffId?,
 }
 
 export type DevProductDefinition = {
@@ -81,6 +86,18 @@ local DevProductConfig: DevProductConfigDefinition = {
 			ProductId = 0, -- ЗАГЛУШКА
 			Reward = { Kind = "BattlePassPremium" },
 		},
+		{
+			Id = "MagnetBoost",
+			DisplayName = "Магнит-буст (20 с)",
+			ProductId = 0, -- ЗАГЛУШКА
+			Reward = { Kind = "Buff", BuffId = "MagnetBoost" },
+		},
+		{
+			Id = "SpeedBoost",
+			DisplayName = "Спид-буст (20 с)",
+			ProductId = 0, -- ЗАГЛУШКА
+			Reward = { Kind = "Buff", BuffId = "SpeedBoost" },
+		},
 	},
 	ProfileReceiptHistory = 50,
 }
@@ -121,6 +138,12 @@ do
 		elseif reward.Kind == "BattlePassPremium" then
 			assert(reward.Amount == nil, `DevProductConfig: у {product.Id} Reward.Amount не используется`)
 			battlePassProducts += 1
+		elseif reward.Kind == "Buff" then
+			assert(reward.Amount == nil, `DevProductConfig: у {product.Id} Reward.Amount не используется`)
+			assert(
+				type(reward.BuffId) == "string" and BuffConfig.Buffs[reward.BuffId :: any] ~= nil,
+				`DevProductConfig: у {product.Id} неизвестный Reward.BuffId {reward.BuffId}`
+			)
 		else
 			error(`DevProductConfig: у {product.Id} неизвестный Reward.Kind {reward.Kind}`)
 		end

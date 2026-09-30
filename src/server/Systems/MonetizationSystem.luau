@@ -50,6 +50,10 @@
 	начисления Currency награду применяет BattlePassSystem.ApplyPremium (премиум текущего сезона
 	+ ретроактивные премиум-награды пройденных тиров) в той же без-yield секции, что и маркер.
 
+	Reward.Kind "Buff" (Magnet Boost / Speed Boost) — тот же путь; награду применяет
+	BuffSystem.Grant (продление Buffs.<Id>ExpiresAt на BuffConfig Duration + эффект сразу) в той же
+	без-yield секции, что и маркер: повтор квитанции видит маркер и не продлевает бафф второй раз.
+
 	Аналитика (раздел 9 ТЗ): выдача дев-продукта — после записи лога квитанций (один раз на
 	покупку, повтор доставки её не повторяет); геймпасс — когда Roblox подтвердил владение
 	после PromptGamePassPurchaseFinished.
@@ -80,6 +84,7 @@ local DataSystem = require(script.Parent.DataSystem)
 local FactorySystem = require(script.Parent.FactorySystem)
 local PetSystem = require(script.Parent.PetSystem)
 local BattlePassSystem = require(script.Parent.BattlePassSystem)
+local BuffSystem = require(script.Parent.BuffSystem)
 local AnalyticsSystem = require(script.Parent.AnalyticsSystem)
 
 type GamePassDefinition = MonetizationConfig.GamePassDefinition
@@ -374,6 +379,16 @@ local function applyReward(player: Player, data: PlayerProfile, product: DevProd
 	if reward.Kind == "BattlePassPremium" then
 		if not BattlePassSystem.ApplyPremium(player, data) then
 			warn(`[MonetizationSystem] Не выдан {product.Id} игроку {player.Name} ({player.UserId}): профиль повреждён`)
+			return false
+		end
+		return true
+	end
+	if reward.Kind == "Buff" then
+		if not BuffSystem.Grant(player, data, reward.BuffId :: any) then
+			warn(
+				`[MonetizationSystem] Не выдан {product.Id} игроку {player.Name} ({player.UserId}): `
+					.. "повреждён раздел Buffs"
+			)
 			return false
 		end
 		return true

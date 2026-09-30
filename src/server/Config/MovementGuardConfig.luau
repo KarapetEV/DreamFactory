@@ -16,8 +16,11 @@
 	скорость не выше MaxHorizontalSpeed + BurstRefillRate при любой частоте запросов.
 
 	Стартовые значения — с запасом от дефолтов Roblox (WalkSpeed 16, JumpPower 50 → ~50 studs/s
-	вверх в момент толчка, Workspace.Gravity 196.2). Апгрейдов скорости, отбрасывания и
-	транспорта в игре нет. Реальная настройка — economy-balancer/QA по логам живых игроков; при
+	вверх в момент толчка, Workspace.Gravity 196.2). Отбрасывания и транспорта в игре нет.
+	Единственное легитимное ускорение — платный бафф Speed Boost (BuffConfig): на его время
+	BuffSystem вызывает MovementGuard.SetSpeedMultiplier(WalkSpeed баффа / базовый), и потолки
+	горизонтали/подъёма/восстановления и ведро допуска умножаются на этот множитель (не больше
+	MaxSpeedMultiplier). Реальная настройка — economy-balancer/QA по логам живых игроков; при
 	появлении ускорителей/батутов/Seat/движущихся платформ потолки нужно поднять вместе с ними
 	(или учитывать скорость носителя).
 ]]
@@ -48,6 +51,12 @@ export type MovementGuardDefinition = {
 	-- Через сколько секунд без HumanoidRootPart в Workspace предупредить в лог (ожидание базы
 	-- при этом продолжается реже — до появления корня, нового персонажа или выхода).
 	SpawnRootTimeout: number,
+	-- Потолок множителя легитимного ускорения (SetSpeedMultiplier): даже битый конфиг баффа
+	-- не отключит проверку. Speed Boost (WalkSpeed 32 / 16 = 2) должен в него укладываться.
+	MaxSpeedMultiplier: number,
+	-- Сколько секунд после снижения множителя (бафф истёк) ещё действует прежний: новый
+	-- WalkSpeed доходит до клиента не мгновенно, персонаж по инерции бежит быстро.
+	SpeedDropGrace: number,
 }
 
 local MovementGuardConfig: MovementGuardDefinition = {
@@ -60,6 +69,8 @@ local MovementGuardConfig: MovementGuardDefinition = {
 	RecoverySpeed = 20,
 	SuspiciousLogWindow = 60,
 	SpawnRootTimeout = 10,
+	MaxSpeedMultiplier = 3,
+	SpeedDropGrace = 2,
 }
 
 for key, value in MovementGuardConfig :: any do
@@ -72,5 +83,6 @@ assert(
 	MovementGuardConfig.RecoverySpeed <= MovementGuardConfig.MaxHorizontalSpeed,
 	"MovementGuardConfig: RecoverySpeed не должен превышать MaxHorizontalSpeed"
 )
+assert(MovementGuardConfig.MaxSpeedMultiplier >= 1, "MovementGuardConfig: MaxSpeedMultiplier должен быть ≥ 1")
 
 return MovementGuardConfig

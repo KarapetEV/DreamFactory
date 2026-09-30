@@ -404,4 +404,52 @@ test("BeltLoad: мусор вместо разбивки (старый/биты�
 	assert(#belt.Allocate({ Joyful = 5 }, 0) == 0)
 end)
 
+------------------------------------------------------------------------------------------
+-- MagnetFlight: полёт кристалла к собравшему при магнитном сборе
+------------------------------------------------------------------------------------------
+
+local MAGNET_FLIGHT = "src/client/Visuals/MagnetFlight"
+
+test("MagnetFlight: летит только магнитный сбор с известным собравшим и в пределах лимита", function()
+	local flight = load(MAGNET_FLIGHT)
+	assert(flight.ShouldFly("Magnet", 42, 0, 16), "магнит — полёт")
+	assert(not flight.ShouldFly("Touch", 42, 0, 16), "касание — прежняя вспышка")
+	assert(not flight.ShouldFly(nil, 42, 0, 16), "без атрибута (старый сервер) — вспышка")
+	assert(not flight.ShouldFly("Magnet", nil, 0, 16), "собравший неизвестен — вспышка")
+	assert(not flight.ShouldFly("Magnet", "42", 0, 16), "мусор вместо UserId — вспышка")
+	assert(not flight.ShouldFly("Magnet", 0 / 0, 0, 16), "NaN вместо UserId — вспышка")
+	assert(not flight.ShouldFly("Magnet", 42, 16, 16), "лимит полётов — вспышка")
+end)
+
+test("MagnetFlight: поза — старт на фрагменте, дуга в середине, у персонажа уменьшенный и Done", function()
+	local flight = load(MAGNET_FLIGHT)
+	local config = load("src/shared/Config/VisualConfig").Fragment
+	local d, arc, endScale = config.MagnetFlyDuration, config.MagnetFlyArc, config.MagnetEndScale
+	local function near(a: number, b: number): boolean
+		return math.abs(a - b) < 1e-9
+	end
+
+	local start = flight.Pose(0, d, arc, endScale)
+	assert(start.Travel == 0 and near(start.Lift, 0) and start.Scale == 1 and not start.Done, "старт")
+
+	local mid = flight.Pose(d / 2, d, arc, endScale)
+	assert(near(mid.Lift, arc), "верх дуги посередине")
+	assert(mid.Travel < 0.5, "разгон: к середине времени пройдено меньше половины пути")
+	assert(mid.Scale < 1 and mid.Scale > endScale)
+
+	local finish = flight.Pose(d * 3, d, arc, endScale)
+	assert(finish.Done and finish.Travel == 1 and near(finish.Lift, 0), "долетел")
+	assert(near(finish.Scale, endScale), "у персонажа — конечный масштаб")
+
+	local previous = -1
+	for i = 0, 10 do
+		local pose = flight.Pose(d * i / 10, d, arc, endScale)
+		assert(pose.Travel >= previous, "путь монотонен — кристалл не откатывается назад")
+		previous = pose.Travel
+	end
+
+	local broken = flight.Pose(0 / 0, d, arc, endScale)
+	assert(broken.Done, "NaN во времени — сразу Done, кристалл не зависает в мире")
+end)
+
 return tests

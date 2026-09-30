@@ -7,7 +7,10 @@
 
 	Фрагмент снов (Part в Workspace.DreamFragments, CollectionSystem):
 	  FragmentEmotion — Types.EmotionType, выбранный сервером при спавне;
-	  FragmentBiome   — BiomeConfig.Id зоны спавна (вторичный акцент окружения).
+	  FragmentBiome   — BiomeConfig.Id зоны спавна (вторичный акцент окружения);
+	  FragmentCollectMode — Types.CollectMode, ставится прямо перед Destroy собранного фрагмента:
+	                    "Touch" (RequestCollect касанием) или "Magnet" (магнит сервера);
+	  FragmentCollectedBy — UserId собравшего игрока (туда летит кристалл при "Magnet").
 	Игрок (Player):
 	  EquippedPets     — EquippedPetsCodec.Encode надетых петов, дающих бонус (PetSystem);
 	  ShieldExpiresAt  — os.time() конца PvP-щита, nil — щита нет (PvPRaidSystem);
@@ -17,6 +20,8 @@
 return {
 	FragmentEmotion = "FragmentEmotion",
 	FragmentBiome = "FragmentBiome",
+	FragmentCollectMode = "FragmentCollectMode",
+	FragmentCollectedBy = "FragmentCollectedBy",
 	EquippedPets = "EquippedPets",
 	ShieldExpiresAt = "ShieldExpiresAt",
 	RaidedCount = "RaidedCount",

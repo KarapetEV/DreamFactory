@@ -15,8 +15,9 @@ export type CollectionDefinition = {
 	SpawnInterval: number, -- секунд между тиками спавна (в каждой зоне за тик — не больше SpawnPerTick)
 	SpawnPerTick: number,
 	FragmentValue: number, -- сколько «сырых фрагментов» даёт один фрагмент снов
-	-- Радиус сбора и кулдаун по уровням Collection.RadiusLevel/SpeedLevel — в UpgradeConfig
-	-- (CollectionRadius/CollectionSpeed), с явным MaxLevel.
+	-- Кулдаун по уровню Collection.SpeedLevel — в UpgradeConfig (CollectionSpeed), с явным MaxLevel.
+	-- Радиус сбора — фиксированный AutoCollectorConfig.Radius × Nostalgic-петы (апгрейд
+	-- CollectionRadius снят с продажи).
 	DistanceTolerance: number, -- запас на лаг между позицией клиента и сервера
 	-- Rate limiting: не больше MaxRequestsPerWindow вызовов RequestCollect за RequestWindow секунд.
 	RequestWindow: number,

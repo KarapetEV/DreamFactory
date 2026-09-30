@@ -426,7 +426,7 @@ test("Интеграция: Nostalgic-пет реально увеличивае
 	local fragments = spawnedFragments(t)
 	assert(#fragments >= 2, `фрагментов заспавнено {#fragments}`)
 
-	local baseRadius = t.Effects.GetEffectValue("CollectionRadius", 0)
+	local baseRadius = t.World:LoadModule("src/shared/Config/AutoCollectorConfig").Radius
 	local tolerance = t.CollectionConfig.DistanceTolerance
 	local multiplier = 1 + bonusOf(t, "PillowMoth", "Legendary")
 	-- Дистанция за базовым радиусом, но внутри радиуса с бонусом.

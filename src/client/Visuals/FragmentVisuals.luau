@@ -10,9 +10,16 @@
 	- Дальше VisualConfig.Fragment.LodDistance от камеры кристалл не двигается и не пылит.
 	- Исчезновение фрагмента (сбор кем угодно) — вспышка частиц через общий бюджет Particles.Burst:
 	  при плотном сборе лишние вспышки отбрасываются.
+	- Магнитный сбор (сервер ставит на Part перед Destroy Attributes.FragmentCollectMode = "Magnet"
+	  и FragmentCollectedBy = UserId): вместо вспышки на месте кристалл за MagnetFlyDuration летит
+	  по дуге к HumanoidRootPart собравшего, уменьшаясь, и вспыхивает у персонажа. Решение и
+	  поза — чистый MagnetFlight. Нет персонажа, фрагмент вне LOD или лимит полётов — обычная
+	  вспышка. Касание ("Touch") выглядит как раньше. Атрибуты — только визуал: сбор уже
+	  засчитан сервером, клиент лишь рисует.
 	- Касание/сбор не трогаем: хитбокс — серверный Part, CollectionController работает с ним.
 ]]
 
+local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -23,6 +30,7 @@ local VisualConfig = require(ReplicatedStorage.shared.Config.VisualConfig)
 local VisualModels = require(ReplicatedStorage.shared.Config.VisualModels)
 local Rig = require(script.Parent.Rig)
 local Particles = require(script.Parent.Particles)
+local MagnetFlight = require(script.Parent.MagnetFlight)
 
 local FOLDER_NAME = "DreamFragments"
 local NEUTRAL_ACCENT = Color3.fromRGB(200, 200, 220)
@@ -36,9 +44,20 @@ type Entry = {
 	Near: boolean,
 }
 
+-- Кристалл, летящий к собравшему (магнитный сбор). Rig уже не в entries.
+type Flight = {
+	Rig: Rig.Rig,
+	From: Vector3,
+	Root: BasePart,
+	Target: Vector3, -- последняя известная позиция корня (персонаж пропал — долетаем туда)
+	StartedAt: number,
+	Color: Color3,
+}
+
 local FragmentVisuals = {}
 
 local entries: { [BasePart]: Entry } = {}
+local flights: { Flight } = {}
 local folder: Folder
 
 local function track(instance: Instance)
@@ -89,14 +108,72 @@ local function track(instance: Instance)
 	rig:Update(base, 0, 1, base)
 end
 
+-- Корень персонажа собравшего игрока (nil — игрок вышел / персонажа нет).
+local function collectorRoot(userId: number): BasePart?
+	local player = Players:GetPlayerByUserId(userId)
+	local character = if player then player.Character else nil
+	local root = if character then character:FindFirstChild("HumanoidRootPart") else nil
+	return if root and root:IsA("BasePart") then root else nil
+end
+
+-- Магнитный сбор: запустить полёт кристалла к собравшему. false — лететь некуда/незачем.
+local function startFlight(instance: Instance, entry: Entry): boolean
+	local cfg = VisualConfig.Fragment
+	local userId = instance:GetAttribute(Attributes.FragmentCollectedBy)
+	local mode = instance:GetAttribute(Attributes.FragmentCollectMode)
+	if not entry.Near or not MagnetFlight.ShouldFly(mode, userId, #flights, cfg.MagnetMaxFlights) then
+		return false
+	end
+	local root = collectorRoot(userId :: number)
+	if not root then
+		return false
+	end
+	-- Кольцо биома — метка точки спавна: в полёт не берём.
+	for _, ring in entry.Rig:FindTagged("BiomeRing") do
+		ring.Transparency = 1
+	end
+	entry.Emitter.Enabled = true -- шлейф частиц за летящим кристаллом
+	table.insert(flights, {
+		Rig = entry.Rig,
+		From = entry.Rig.Anchor.Position,
+		Root = root,
+		Target = root.Position,
+		StartedAt = os.clock(),
+		Color = entry.Color,
+	})
+	return true
+end
+
 local function untrack(instance: Instance)
 	local entry = entries[instance :: BasePart]
 	if not entry then
 		return
 	end
 	entries[instance :: BasePart] = nil
+	if startFlight(instance, entry) then
+		return
+	end
 	Particles.Burst(entry.Base.Position, entry.Color, VisualConfig.Fragment.CollectBurstCount)
 	entry.Rig:Destroy()
+end
+
+local function stepFlights(t: number)
+	local cfg = VisualConfig.Fragment
+	for index = #flights, 1, -1 do
+		local flight = flights[index]
+		if flight.Root.Parent ~= nil then
+			flight.Target = flight.Root.Position -- догоняем бегущего персонажа
+		end
+		local pose = MagnetFlight.Pose(t - flight.StartedAt, cfg.MagnetFlyDuration, cfg.MagnetFlyArc, cfg.MagnetEndScale)
+		local position = flight.From:Lerp(flight.Target, pose.Travel) + Vector3.new(0, pose.Lift, 0)
+		local pivot = CFrame.new(position) * CFrame.Angles(0, t * cfg.SpinSpeed * 4, 0)
+		flight.Rig:Update(pivot, t, pose.Scale, pivot)
+		if pose.Done then
+			table.remove(flights, index)
+			Particles.Burst(flight.Target, flight.Color, cfg.MagnetArriveBurstCount, 0.3)
+			flight.Rig:Destroy()
+		end
+	end
 end
 
 local function step()
@@ -107,6 +184,7 @@ local function step()
 	local cameraPosition = camera.CFrame.Position
 	local t = os.clock()
 	local cfg = VisualConfig.Fragment
+	stepFlights(t)
 	for _, entry in entries do
 		local near = (entry.Base.Position - cameraPosition).Magnitude <= cfg.LodDistance
 		if near ~= entry.Near then

@@ -1,8 +1,10 @@
 --[[
-	Тесты авто-сборщика (геймпасс + пассивный сбор в CollectionSystem): владение только через
-	Monetization.GamePassesOwned, радиус = getCollectRadius (апгрейд × Nostalgic-петы),
-	общая с RequestCollect транзакция (без двойного засчёта фрагмента), изоляция битых профилей,
-	миграция v3 → v4 (удаление Collection.AutoCollectorOwned) и load-time проверки конфига.
+	Тесты магнита сбора (геймпасс Авто-сборщика + серверный сбор по радиусу в CollectionSystem):
+	владение только через Monetization.GamePassesOwned, радиус = фиксированный
+	AutoCollectorConfig.Radius × Nostalgic-петы (апгрейд CollectionRadius не влияет), лимит
+	склада, режим сбора в атрибутах фрагмента (Touch/Magnet), общая с RequestCollect транзакция
+	(без двойного засчёта фрагмента), изоляция битых профилей, миграция v3 → v4 и load-time
+	проверки конфига.
 
 	Запуск: lune run src/tests/run (из корня репозитория).
 ]]
@@ -28,8 +30,16 @@ end
 
 -- PetSystem + CollectionSystem в одном «сервере»: подменённый DataSystem (профили в памяти),
 -- перехват обработчиков ремоут. Игроки — через AddPlayer; CollectionSystem.Init вызывает тест.
-local function setup()
+-- magnetRadius — подмена AutoCollectorConfig.Radius (чтобы дотянуться до нескольких точек спавна).
+local function setup(magnetRadius: number?)
 	local world = Harness.NewWorld()
+	if magnetRadius then
+		world.SourcePatches["src/shared/Config/AutoCollectorConfig"] = function(source: string): string
+			local patched, count = string.gsub(source, "\tRadius = 12,", `\tRadius = {magnetRadius},`)
+			assert(count == 1, "патч Radius не применился — тест устарел")
+			return patched
+		end
+	end
 	local _, dataSystem = world:NewServer()
 	local profiles = {}
 	local handlers = {}
@@ -130,6 +140,13 @@ local function placeAbove(player, fragment, distance: number)
 	local offset = fragment.Position - fragment.Position
 	offset.Y = distance
 	return placeCharacter(player, fragment.Position + offset)
+end
+
+-- Точка рядом с фрагментом: сдвиг dx по X и dy по Y.
+local function offsetFrom(fragment, dx: number, dy: number)
+	local offset = fragment.Position - fragment.Position
+	offset.X, offset.Y = dx, dy
+	return fragment.Position + offset
 end
 
 -- Ставит персонажа сбоку от фрагмента на distance studs по X.
@@ -242,9 +259,8 @@ test("С геймпассом фрагмент в радиусе собирае�
 end)
 
 test("За тик собирается не больше одного фрагмента, берётся ближайший", function()
-	local t = setup()
+	local t = setup(40) -- дотягивается до нескольких точек спавна
 	local player, data = t.AddPlayer(1, true)
-	data.Collection.RadiusLevel = 5 -- радиус 22: дотягивается до нескольких точек спавна
 	t.Collection.Init()
 	t.World:Advance(t.CollectionConfig.SpawnInterval * 3) -- до тика: докинуть фрагментов в зону
 	data.Factory.RawFragments = { Joyful = 0, Nostalgic = 0, Fearful = 0 }
@@ -263,31 +279,50 @@ test("Фрагмент за пределами радиуса не собира�
 	local player, data = t.AddPlayer(1, true)
 	t.Collection.Init()
 	local fragment = firstFragment(t)
-	local radius = t.Effects.GetEffectValue("CollectionRadius", 0)
-	placeAbove(player, fragment, radius + t.CollectionConfig.DistanceTolerance + 1)
+	placeAbove(player, fragment, t.AutoConfig.Radius + t.CollectionConfig.DistanceTolerance + 1)
 
 	t.Tick(5)
 	assert(rawTotal(data) == 0, "далеко — не собрано")
 	assert(not fragment.Destroyed)
 end)
 
-test("Радиус пассивного сбора растёт от апгрейда CollectionRadius", function()
+test("Радиус магнита фиксированный: внутри Radius собирает, апгрейд CollectionRadius его не растит", function()
 	local t = setup()
 	local player, data = t.AddPlayer(1, true)
+	data.Collection.RadiusLevel = 5 -- старый купленный уровень (22 studs) остаётся в профиле
 	t.Collection.Init()
 	local fragment = firstFragment(t)
-	local base = t.Effects.GetEffectValue("CollectionRadius", 0)
-	local upgraded = t.Effects.GetEffectValue("CollectionRadius", 1)
-	assert(upgraded > base)
-	placeAbove(player, fragment, (base + upgraded) / 2)
+	local radius = t.AutoConfig.Radius
+	assert(t.Effects.GetEffectValue("CollectionRadius", 5) > radius + 2, "уровень 5 дал бы больше")
+	local root = placeAbove(player, fragment, radius + 2)
 
 	t.Tick(3)
-	assert(rawTotal(data) == 0, "на уровне 0 не дотягивается")
+	assert(rawTotal(data) == 0, "за фиксированным радиусом не собран: уровень апгрейда не читается")
+	assert(not fragment.Destroyed)
 
-	data.Collection.RadiusLevel = 1
+	root.Position = offsetFrom(fragment, 0, radius - 1)
+	t.World:Advance(1) -- спуск на 3 studs — в пределах потолков MovementGuard
 	t.Tick()
-	assert(rawTotal(data) == t.CollectionConfig.FragmentValue, "после апгрейда собран")
+	assert(rawTotal(data) == t.CollectionConfig.FragmentValue, "внутри Radius — собран")
 	assert(fragment.Destroyed)
+end)
+
+test("Ручной сбор касанием: граница дистанции — тот же фиксированный радиус, апгрейд не влияет", function()
+	local t = setup()
+	local player, data = t.AddPlayer(1, false)
+	data.Collection.RadiusLevel = 5
+	t.Collection.Init()
+	local fragment = firstFragment(t)
+	local id = fragment:GetAttribute("FragmentId")
+	local far = t.AutoConfig.Radius + t.CollectionConfig.DistanceTolerance + 1
+	local root = placeAside(player, fragment, far)
+	t.Handlers.RequestCollect(player, id)
+	assert(rawTotal(data) == 0, "за Radius + допуск — отказ")
+
+	root.Position = offsetFrom(fragment, 1, 0)
+	t.World:Advance(far / 16)
+	t.Handlers.RequestCollect(player, id)
+	assert(rawTotal(data) == t.CollectionConfig.FragmentValue, "вплотную — собран")
 end)
 
 test("Радиус пассивного сбора растёт от Nostalgic-пета", function()
@@ -295,7 +330,7 @@ test("Радиус пассивного сбора растёт от Nostalgic-�
 	local player, data = t.AddPlayer(1, true)
 	t.Collection.Init()
 	local fragment = firstFragment(t)
-	local base = t.Effects.GetEffectValue("CollectionRadius", 0)
+	local base = t.AutoConfig.Radius
 	local multiplier = 1 + bonusOf(t, "PillowMoth", "Legendary")
 	placeAbove(player, fragment, base * (1 + multiplier) / 2)
 
@@ -308,6 +343,131 @@ test("Радиус пассивного сбора растёт от Nostalgic-�
 	t.Tick()
 	assert(rawTotal(data) == t.CollectionConfig.FragmentValue, "с Nostalgic-петом собран")
 	assert(fragment.Destroyed)
+end)
+
+test("Магнит упирается в склад: собирает до ёмкости, дальше фрагменты остаются в мире", function()
+	local t = setup(40)
+	local player, data = t.AddPlayer(1, true)
+	t.Collection.Init()
+	t.World:Advance(t.CollectionConfig.SpawnInterval * 3)
+	local capacity = t.Effects.GetEffectValue("StorageCapacity", data.Factory.StorageCapacityLevel)
+	data.Factory.RawFragments = { Joyful = capacity - 1, Nostalgic = 0, Fearful = 0 }
+	local fragments = liveFragments(t)
+	assert(#fragments >= 2, `фрагментов {#fragments}`)
+	placeAbove(player, fragments[1], 1)
+
+	t.Tick(6)
+	assert(rawTotal(data) == capacity, `склад заполнен ровно до ёмкости, {rawTotal(data)}`)
+	local destroyed = 0
+	for _, fragment in fragments do
+		if fragment.Destroyed then
+			destroyed += 1
+		end
+	end
+	assert(destroyed == 1, `собран ровно один фрагмент, убрано {destroyed}`)
+end)
+
+------------------------------------------------------------------------------------------
+-- Магнит от баффа Magnet Boost (без геймпасса)
+------------------------------------------------------------------------------------------
+
+-- os.time() мира Harness при текущем виртуальном времени.
+local function osTime(t): number
+	return 1_000_000 + math.floor(t.World.Now)
+end
+
+test("Magnet Boost без геймпасса: магнит собирает по фиксированному радиусу, пока бафф действует", function()
+	local t = setup()
+	local player, data = t.AddPlayer(1, false)
+	t.Collection.Init()
+	local fragment = firstFragment(t)
+	placeAbove(player, fragment, t.AutoConfig.Radius - 1)
+
+	t.Tick(2)
+	assert(rawTotal(data) == 0, "без геймпасса и баффа магнита нет")
+
+	data.Buffs.MagnetBoostExpiresAt = osTime(t) + 20
+	t.Tick()
+	assert(rawTotal(data) == t.CollectionConfig.FragmentValue, "с баффом собрано")
+	assert(fragment:GetAttribute("FragmentCollectMode") == "Magnet")
+end)
+
+test("Magnet Boost с Nostalgic-петом: радиус = фиксированный × бонус пета", function()
+	local t = setup()
+	local player, data = t.AddPlayer(1, false)
+	data.Buffs.MagnetBoostExpiresAt = osTime(t) + 60
+	t.Collection.Init()
+	local fragment = firstFragment(t)
+	local base = t.AutoConfig.Radius
+	local multiplier = 1 + bonusOf(t, "PillowMoth", "Legendary")
+	placeAbove(player, fragment, base * (1 + multiplier) / 2)
+
+	t.Tick(2)
+	assert(rawTotal(data) == 0, "без пета не дотягивается")
+	local pet = { Id = "pet-1", SpeciesId = "PillowMoth", Rarity = "Legendary", Level = 1, Equipped = false }
+	table.insert(data.Pets, pet)
+	t.Handlers.EquipPet(player, pet.Id)
+	t.Tick()
+	assert(rawTotal(data) == t.CollectionConfig.FragmentValue, "с Nostalgic-петом собран")
+end)
+
+test("Magnet Boost истёк — магнит выключается; битый срок баффа = нет магнита, тик жив", function()
+	local t = setup()
+	local expired, d1 = t.AddPlayer(1, false)
+	d1.Buffs.MagnetBoostExpiresAt = osTime(t) + 2
+	local broken, d2 = t.AddPlayer(2, false)
+	d2.Buffs.MagnetBoostExpiresAt = 0 / 0
+	local junk, d3 = t.AddPlayer(3, false)
+	;(d3 :: any).Buffs = "сломано"
+	t.Collection.Init()
+	t.World:Advance(3) -- бафф игрока 1 истёк до первого тика
+	local fragment = firstFragment(t)
+	for _, player in { expired, broken, junk } do
+		placeAbove(player, fragment, 1)
+	end
+
+	t.Tick(3)
+	assert(rawTotal(d1) == 0 and rawTotal(d2) == 0 and rawTotal(d3) == 0, "никто не собрал магнитом")
+	assert(not fragment.Destroyed)
+	for _, message in t.World.Warnings do
+		assert(not string.find(message, "авто-сборщика у", 1, true), message)
+	end
+end)
+
+------------------------------------------------------------------------------------------
+-- Сигнал клиенту: режим сбора в атрибутах фрагмента
+------------------------------------------------------------------------------------------
+
+test("Магнит помечает фрагмент FragmentCollectMode = Magnet и UserId собравшего", function()
+	local t = setup()
+	local player = t.AddPlayer(7, true)
+	t.Collection.Init()
+	local fragment = firstFragment(t)
+	placeAbove(player, fragment, 3)
+
+	t.Tick()
+	assert(fragment.Destroyed, "собран магнитом")
+	local mode = fragment:GetAttribute("FragmentCollectMode")
+	assert(mode == "Magnet", tostring(mode))
+	assert(fragment:GetAttribute("FragmentCollectedBy") == 7)
+end)
+
+test("Касание помечает фрагмент FragmentCollectMode = Touch; отклонённый запрос атрибутов не ставит", function()
+	local t = setup()
+	local player = t.AddPlayer(8, false)
+	t.Collection.Init()
+	local fragment = firstFragment(t)
+	local id = fragment:GetAttribute("FragmentId")
+	local root = placeAside(player, fragment, 300)
+	t.Handlers.RequestCollect(player, id)
+	assert(fragment:GetAttribute("FragmentCollectMode") == nil, "отказ — без сигнала")
+
+	root.Position = fragment.Position
+	t.World:Advance(300 / 16)
+	t.Handlers.RequestCollect(player, id)
+	assert(fragment.Destroyed)
+	assert(fragment:GetAttribute("FragmentCollectMode") == "Touch")
+	assert(fragment:GetAttribute("FragmentCollectedBy") == 8)
 end)
 
 ------------------------------------------------------------------------------------------
@@ -348,9 +508,8 @@ test("Гонка: тик забрал фрагмент — ручной RequestC
 end)
 
 test("Кулдаун общий: сразу после ручного сбора тик не собирает", function()
-	local t = setup()
+	local t = setup(40)
 	local owner, data = t.AddPlayer(1, true)
-	data.Collection.RadiusLevel = 5
 	t.Collection.Init()
 	t.World:Advance(t.CollectionConfig.SpawnInterval * 2)
 	local fragments = liveFragments(t)

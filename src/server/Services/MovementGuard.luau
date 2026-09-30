@@ -39,6 +39,14 @@
 	- Нет живого персонажа (нет Humanoid/HumanoidRootPart, Health ≤ 0) — nil.
 	- Игрок вышел — состояние и подписка удаляются (PlayerRemoving); запрос после выхода
 	  состояние не воскрешает.
+	- Легитимное ускорение (бафф Speed Boost, BuffSystem): SetSpeedMultiplier(player, k) —
+	  горизонтальный потолок, потолок подъёма, RecoverySpeed и ведро допуска (ёмкость и
+	  пополнение) умножаются на k: игрок под баффом проверяется так же, как обычный, только
+	  «в k раз быстрее». Падение (MaxFallSpeed) от WalkSpeed не зависит и не масштабируется.
+	  k задаёт только сервер (клиентского входа нет), зажат в [1, MaxSpeedMultiplier].
+	  Рост k — сразу; снижение (бафф истёк) — прежний k держится ещё SpeedDropGrace секунд:
+	  пока новый WalkSpeed реплицируется клиенту, персонаж ещё бежит быстро, и честного игрока
+	  на стыке не должно флагать. Множитель — у игрока, а не у персонажа: респавн его не сбрасывает.
 ]]
 
 local Players = game:GetService("Players")
@@ -60,6 +68,11 @@ type PlayerState = {
 	Tracked: boolean,
 	Connection: RBXScriptConnection?,
 	LastWarnAt: number,
+	-- Множитель потолков скорости от легитимного ускорения (SetSpeedMultiplier), ≥ 1.
+	SpeedMultiplier: number,
+	-- Множитель до последнего снижения — действует до GraceUntil (os.clock()).
+	GraceMultiplier: number,
+	GraceUntil: number,
 }
 
 local MovementGuard = {}
@@ -80,6 +93,9 @@ local function getState(player: Player): PlayerState
 			Tracked = false,
 			Connection = nil,
 			LastWarnAt = -math.huge,
+			SpeedMultiplier = 1,
+			GraceMultiplier = 1,
+			GraceUntil = -math.huge,
 		}
 		states[player] = state
 	end
@@ -99,11 +115,20 @@ local function isFiniteVector(v: Vector3): boolean
 	return math.abs(v.X) < math.huge and math.abs(v.Y) < math.huge and math.abs(v.Z) < math.huge
 end
 
+-- Действующий множитель потолков скорости: после снижения прежний держится до GraceUntil.
+local function speedFactor(state: PlayerState, now: number): number
+	if now < state.GraceUntil then
+		return math.max(state.SpeedMultiplier, state.GraceMultiplier)
+	end
+	return state.SpeedMultiplier
+end
+
 -- Смещение from → to за dt секунд: сколько studs сверх потолков скорости (0 — в пределах).
-local function excessMovement(from: Vector3, to: Vector3, dt: number, suspect: boolean): number
+-- factor — множитель легитимного ускорения (speedFactor); на падение не влияет.
+local function excessMovement(from: Vector3, to: Vector3, dt: number, suspect: boolean, factor: number): number
 	local c = MovementGuardConfig
-	local horizontalSpeed = if suspect then c.RecoverySpeed else c.MaxHorizontalSpeed
-	local riseSpeed = if suspect then math.min(c.RecoverySpeed, c.MaxRiseSpeed) else c.MaxRiseSpeed
+	local horizontalSpeed = factor * (if suspect then c.RecoverySpeed else c.MaxHorizontalSpeed)
+	local riseSpeed = factor * (if suspect then math.min(c.RecoverySpeed, c.MaxRiseSpeed) else c.MaxRiseSpeed)
 	local dx, dy, dz = to.X - from.X, to.Y - from.Y, to.Z - from.Z
 	local horizontal = math.sqrt(dx * dx + dz * dz)
 	local vertical = if dy >= 0 then dy - riseSpeed * dt else -dy - c.MaxFallSpeed * dt
@@ -162,8 +187,12 @@ local function sample(player: Player, state: PlayerState, now: number): Vector3?
 	end
 
 	local dt = now - state.TrustedAt
-	local burst = math.min(MovementGuardConfig.BurstAllowance, state.Burst + MovementGuardConfig.BurstRefillRate * dt)
-	local excess = excessMovement(trusted, position, dt, state.Suspect)
+	local factor = speedFactor(state, now)
+	local burst = math.min(
+		MovementGuardConfig.BurstAllowance * factor,
+		state.Burst + MovementGuardConfig.BurstRefillRate * factor * dt
+	)
+	local excess = excessMovement(trusted, position, dt, state.Suspect, factor)
 	if isFiniteVector(position) and excess <= burst then
 		setTrusted(state, position, now, burst - excess)
 		state.Suspect = false
@@ -254,6 +283,33 @@ function MovementGuard.GetTrustedPosition(player: Player): Vector3?
 		return nil
 	end
 	return sample(player, getState(player), os.clock())
+end
+
+-- Множитель потолков скорости от легитимного серверного ускорения (бафф Speed Boost):
+-- WalkSpeed под баффом / базовый WalkSpeed; 1 — ускорения нет. Вне [1, MaxSpeedMultiplier]
+-- зажимается (NaN/inf — ошибка вызывающего, считается 1: проверку не ослабляем).
+function MovementGuard.SetSpeedMultiplier(player: Player, multiplier: number)
+	if player.Parent == nil then
+		return
+	end
+	if not (multiplier >= 1 and multiplier < math.huge) then
+		if multiplier ~= multiplier or multiplier == math.huge or multiplier == -math.huge then
+			warn(`[MovementGuard] Некорректный множитель скорости {multiplier} для {player.Name} ({player.UserId}) — считаем 1`)
+		end
+		multiplier = 1
+	end
+	multiplier = math.min(multiplier, MovementGuardConfig.MaxSpeedMultiplier)
+
+	local state = getState(player)
+	if multiplier == state.SpeedMultiplier then
+		return
+	end
+	if multiplier < state.SpeedMultiplier then
+		local now = os.clock()
+		state.GraceMultiplier = speedFactor(state, now)
+		state.GraceUntil = now + MovementGuardConfig.SpeedDropGrace
+	end
+	state.SpeedMultiplier = multiplier
 end
 
 function MovementGuard.Init()

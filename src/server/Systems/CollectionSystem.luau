@@ -6,18 +6,28 @@
 	- Сервер по таймеру спавнит фрагменты (анкеренные Part) в зонах из CollectionConfig
 	  в Workspace.DreamFragments; клиент их только видит и присылает intent RequestCollect(fragmentId).
 	- Клиенту не доверяем ничего, кроме id: позиция фрагмента берётся из серверного реестра,
-	  позиция игрока — доверенная из MovementGuard (телепорт её не сдвигает), радиус/кулдаун/
-	  ёмкость — из уровней профиля и UpgradeConfig (UpgradeEffects зажимает уровень в
-	  [0, MaxLevel] — эффект не растёт без предела).
-	- Радиус сбора = значение апгрейда (UpgradeEffects) × CollectionRadiusMultiplier надетых
+	  позиция игрока — доверенная из MovementGuard (телепорт её не сдвигает), кулдаун/ёмкость —
+	  из уровней профиля и UpgradeConfig (UpgradeEffects зажимает уровень в [0, MaxLevel] —
+	  эффект не растёт без предела).
+	- Радиус сбора (getCollectRadius) — одна формула для магнита и для ручного сбора:
+	  фиксированный AutoCollectorConfig.Radius × CollectionRadiusMultiplier надетых
 	  Nostalgic-петов из кэша PetSystem (без кэша — 1; на каждый запрос не пересчитывается).
+	  Апгрейд CollectionRadius снят с продажи и здесь не читается.
 	- Сбор — одна функция без yield между проверками и записью (collectFragment): фрагмент
 	  забирает ровно один игрок, буфер не выходит за ёмкость склада.
-	- Авто-сборщик (геймпасс AutoCollectorConfig.GamePassId в Monetization.GamePassesOwned):
-	  отдельный серверный тик раз в AutoCollectorConfig.TickInterval берёт ближайший фрагмент
-	  в getCollectRadius владельца и проводит его через ту же collectFragment — те же проверки,
-	  общий с ручным сбором кулдаун. Клиент в этом пути не участвует; каждый игрок обрабатывается
-	  в своём pcall — битый профиль одного не останавливает тик для остальных.
+	- Ручной сбор — касанием: CollectionController шлёт RequestCollect(id), когда корень
+	  персонажа касается хитбокса. Серверная граница дистанции — тот же getCollectRadius.
+	- Магнит: у владельца геймпасса Авто-сборщика (AutoCollectorConfig.GamePassId в
+	  Monetization.GamePassesOwned) и у игрока с действующим баффом Magnet Boost
+	  (BuffSystem.IsActive — по Buffs.MagnetBoostExpiresAt). Отдельный серверный тик раз в
+	  AutoCollectorConfig.TickInterval берёт ближайший фрагмент в getCollectRadius и проводит его через ту же collectFragment —
+	  те же проверки (склад, кулдаун, MovementGuard-позиция), общий с ручным сбором кулдаун.
+	  Клиент в этом пути не участвует; каждый игрок обрабатывается в своём pcall — битый
+	  профиль одного не останавливает тик для остальных.
+	- Сигнал клиентам о способе сбора: прямо перед Destroy собранного фрагмента сервер ставит
+	  на его Part атрибуты FragmentCollectMode ("Touch"/"Magnet") и FragmentCollectedBy (UserId).
+	  Изменения одного инстанса реплицируются по порядку, поэтому клиент читает их в
+	  ChildRemoved: при "Magnet" кристалл летит к собравшему, при "Touch" — прежняя вспышка.
 	- Эмоциональный тип фрагмента (GDD раздел 3) выбирает сервер при спавне по весам
 	  FragmentEmotionConfig.SpawnWeights (серверный Random). При сборе фрагмент ложится в
 	  Factory.RawFragments[тип] — тип берётся из серверного реестра. Ёмкость склада
@@ -46,11 +56,13 @@ local FragmentBuffer = require(ReplicatedStorage.shared.FragmentBuffer)
 local DataSystem = require(script.Parent.DataSystem)
 local PetSystem = require(script.Parent.PetSystem)
 local AnalyticsSystem = require(script.Parent.AnalyticsSystem)
+local BuffSystem = require(script.Parent.BuffSystem)
 local RateLimiter = require(script.Parent.Parent.Services.RateLimiter)
 local MovementGuard = require(script.Parent.Parent.Services.MovementGuard)
 
 type PlayerProfile = Types.PlayerProfile
 type EmotionType = Types.EmotionType
+type CollectMode = Types.CollectMode
 
 type Fragment = {
 	Id: number,
@@ -220,11 +232,11 @@ local function spawnTick(folder: Folder)
 	end
 end
 
--- Радиус апгрейда не больше значения на MaxLevel: уровень из профиля зажимается в
--- UpgradeEffects (M-1); бонус петов поверх зажат PetSpeciesConfig.MaxMultiplier.
-local function getCollectRadius(player: Player, data: PlayerProfile): number
-	return UpgradeEffects.GetEffectValue("CollectionRadius", data.Collection.RadiusLevel)
-		* PetSystem.GetCachedBonuses(player).CollectionRadiusMultiplier
+-- Радиус сбора — одна формула для магнита и ручного сбора: фиксированный радиус магнита
+-- из конфига × бонус Nostalgic-петов (зажат PetSpeciesConfig.MaxMultiplier). Профиль не
+-- участвует: апгрейд CollectionRadius снят с продажи, Collection.RadiusLevel не читается.
+local function getCollectRadius(player: Player): number
+	return AutoCollectorConfig.Radius * PetSystem.GetCachedBonuses(player).CollectionRadiusMultiplier
 end
 
 local function getCooldown(data: PlayerProfile): number
@@ -235,11 +247,17 @@ local function getStorageCapacity(data: PlayerProfile): number
 	return UpgradeEffects.GetEffectValue("StorageCapacity", data.Factory.StorageCapacityLevel)
 end
 
--- Единая транзакция сбора — и для RequestCollect, и для авто-сборщика: проверки и запись
--- без yield. Возвращает nil при успехе или причину отказа (для лога; клиенту не отправляется).
--- Первая проверка — фрагмент всё ещё в реестре: собранный (кем угодно и каким угодно путём)
--- фрагмент второй раз не засчитывается.
-local function collectFragment(player: Player, data: PlayerProfile, fragment: Fragment, now: number): string?
+-- Единая транзакция сбора — и для RequestCollect (mode "Touch"), и для магнита ("Magnet"):
+-- проверки и запись без yield. Возвращает nil при успехе или причину отказа (для лога;
+-- клиенту не отправляется). Первая проверка — фрагмент всё ещё в реестре: собранный
+-- (кем угодно и каким угодно путём) фрагмент второй раз не засчитывается.
+local function collectFragment(
+	player: Player,
+	data: PlayerProfile,
+	fragment: Fragment,
+	now: number,
+	mode: CollectMode
+): string?
 	if fragments[fragment.Id] ~= fragment then
 		return "no-such-fragment"
 	end
@@ -254,7 +272,7 @@ local function collectFragment(player: Player, data: PlayerProfile, fragment: Fr
 		return "no-character"
 	end
 
-	local maxDistance = getCollectRadius(player, data) + CollectionConfig.DistanceTolerance
+	local maxDistance = getCollectRadius(player) + CollectionConfig.DistanceTolerance
 	-- «не (≤)», а не «>»: NaN-дистанция — отказ, а не проход.
 	if not ((rootPosition - fragment.Position).Magnitude <= maxDistance) then
 		return "too-far"
@@ -272,6 +290,9 @@ local function collectFragment(player: Player, data: PlayerProfile, fragment: Fr
 
 	buffer[fragment.EmotionType] += math.min(CollectionConfig.FragmentValue, space)
 	state.LastCollectAt = now
+	-- Только визуал: до Destroy, чтобы клиент увидел атрибуты в ChildRemoved.
+	fragment.Part:SetAttribute(Attributes.FragmentCollectMode, mode)
+	fragment.Part:SetAttribute(Attributes.FragmentCollectedBy, player.UserId)
 	removeFragment(fragment)
 	AnalyticsSystem.RecordFunnelStep(player, data, "FirstCollect")
 	return nil
@@ -293,7 +314,7 @@ local function tryCollect(player: Player, fragmentId: unknown, now: number): str
 		return "no-profile"
 	end
 
-	return collectFragment(player, data, fragment, now)
+	return collectFragment(player, data, fragment, now, "Touch")
 end
 
 -- Владение авто-сборщиком — только по Monetization.GamePassesOwned; битый раздел = не владеет.
@@ -314,12 +335,17 @@ local function ownsAutoCollector(data: PlayerProfile): boolean
 	return false
 end
 
--- Пассивный сбор одного игрока: ближайший фрагмент в радиусе → collectFragment.
+-- Есть ли у игрока магнит сейчас: геймпасс Авто-сборщика или действующий бафф Magnet Boost.
+local function hasMagnet(data: PlayerProfile): boolean
+	return ownsAutoCollector(data) or BuffSystem.IsActive(data, "MagnetBoost")
+end
+
+-- Магнит одного игрока: ближайший фрагмент в радиусе → collectFragment.
 -- Один кандидат за тик: общий кулдаун всё равно пропустит не больше одного сбора,
 -- а при отказе по складу/персонажу откажут и все остальные.
 local function autoCollectFor(player: Player, now: number)
 	local data = DataSystem.GetData(player)
-	if not data or not ownsAutoCollector(data) then
+	if not data or not hasMagnet(data) then
 		return
 	end
 
@@ -329,7 +355,7 @@ local function autoCollectFor(player: Player, now: number)
 	end
 
 	local nearest: Fragment? = nil
-	local nearestDistance = getCollectRadius(player, data)
+	local nearestDistance = getCollectRadius(player)
 	for _, fragment in fragments do
 		local distance = (rootPosition - fragment.Position).Magnitude
 		if distance <= nearestDistance then
@@ -340,7 +366,7 @@ local function autoCollectFor(player: Player, now: number)
 
 	if nearest then
 		-- Отказ здесь не подозрителен (инициатор — сервер), в registerReject не пишем.
-		collectFragment(player, data, nearest, now)
+		collectFragment(player, data, nearest, now, "Magnet")
 	end
 end
 

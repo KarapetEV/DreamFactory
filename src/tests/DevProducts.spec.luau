@@ -191,7 +191,7 @@ end
 -- Конфиг
 ------------------------------------------------------------------------------------------
 
-test("DevProductConfig: паки Эссенции S/M/L/XL (объём растёт) + премиум пропуска, ProductId — заглушки 0", function()
+test("DevProductConfig: паки Эссенции S/M/L/XL (объём растёт) + премиум пропуска + баффы, ProductId — заглушки 0", function()
 	local world = Harness.NewWorld()
 	local config = world:LoadModule("src/shared/Config/DevProductConfig")
 	local ids = {}
@@ -201,6 +201,8 @@ test("DevProductConfig: паки Эссенции S/M/L/XL (объём раст�
 		if product.Reward.Kind == "Essence" then
 			assert(product.Reward.Amount > previous, `{product.Id}: объём больше предыдущего`)
 			previous = product.Reward.Amount
+		elseif product.Reward.Kind == "Buff" then
+			assert(product.Reward.BuffId == product.Id and product.Reward.Amount == nil, product.Id)
 		else
 			assert(product.Reward.Kind == "BattlePassPremium" and product.Reward.Amount == nil, product.Id)
 		end
@@ -208,7 +210,7 @@ test("DevProductConfig: паки Эссенции S/M/L/XL (объём раст�
 		assert(product.Price == nil, "цены в Robux в конфиге нет")
 	end
 	assert(
-		table.concat(ids, ",") == "EssencePackS,EssencePackM,EssencePackL,EssencePackXL,BattlePassPremium",
+		table.concat(ids, ",") == "EssencePackS,EssencePackM,EssencePackL,EssencePackXL,BattlePassPremium,MagnetBoost,SpeedBoost",
 		table.concat(ids, ",")
 	)
 end)
@@ -526,6 +528,107 @@ test("Выдача дев-продукта: DevProductPurchased один раз,
 	local events = t.World.AnalyticsEvents
 	assert(#events == 1 and events[1].Name == "DevProductPurchased", `событий {#events}`)
 	assert(events[1].Player == t.Player and events[1].CustomFields.CustomField01 == "EssencePackS")
+end)
+
+------------------------------------------------------------------------------------------
+-- Временные баффы (Reward.Kind "Buff")
+------------------------------------------------------------------------------------------
+
+-- ProductId продукта тестовой копии конфига по внутреннему Id.
+local function productId(config, id: string): number
+	for _, product in config.Products do
+		if product.Id == id then
+			return product.ProductId
+		end
+	end
+	error(`нет продукта {id}`)
+end
+
+local function osTime(world): number
+	return 1_000_000 + math.floor(world.Now)
+end
+
+test("DevProductConfig: Reward.Kind Buff с неизвестным BuffId роняет загрузку", function()
+	local world = Harness.NewWorld()
+	world.SourcePatches["src/shared/Config/DevProductConfig"] = function(source: string): string
+		local patched, count = string.gsub(source, `BuffId = "SpeedBoost"`, `BuffId = "FlyBoost"`)
+		assert(count == 1, "патч не применился — тест устарел")
+		return patched
+	end
+	local ok, err = pcall(world.LoadModule, world, "src/shared/Config/DevProductConfig")
+	assert(not ok and string.find(tostring(err), "BuffId", 1, true), tostring(err))
+end)
+
+for _, buffId in { "MagnetBoost", "SpeedBoost" } do
+	test(`{buffId}: покупка продлевает Buffs.{buffId}ExpiresAt на 20 с; повтор доставки не продлевает`, function()
+		local t = setup()
+		local id = productId(t.Config, buffId)
+		local field = `{buffId}ExpiresAt`
+		local start = osTime(t.World)
+
+		assert(t.Server.Receipt(receipt(42, "b-1", id), 1) == GRANTED)
+		assert(t.Data.Buffs[field] == start + 20, tostring(t.Data.Buffs[field]))
+		assert(t.World.Records.Player_42.Data.Buffs[field] == start + 20, "срок баффа уже в DataStore")
+		assert(logRecord(t.World, "b-1").Product == buffId, "лог квитанции записан")
+		assert(t.Data.Currency.Essence == t.StartEssence, "Эссенция не тронута")
+
+		for _ = 1, 3 do
+			assert(t.Server.Receipt(receipt(42, "b-1", id), 1) == GRANTED, "повтор закрывается")
+		end
+		assert(t.Data.Buffs[field] == start + 20, "повтор доставки не продлил бафф")
+
+		-- Новая покупка того же продукта, пока бафф действует, — стекинг продлением.
+		assert(t.Server.Receipt(receipt(42, "b-2", id), 1) == GRANTED)
+		assert(t.Data.Buffs[field] == start + 40, `вторая покупка: +20, {t.Data.Buffs[field] - start}`)
+		assert(#t.Data.Monetization.ProcessedReceipts == 2)
+	end)
+end
+
+test("Бафф: сбой сохранения профиля — NotProcessedYet, повтор досохраняет без второго продления", function()
+	local t = setup()
+	local id = productId(t.Config, "SpeedBoost")
+	local start = osTime(t.World)
+	failKeys(t.World, "UpdateAsync", "Player_")
+	assert(t.Server.Receipt(receipt(42, "b-save", id), 1) == NOT_YET)
+	assert(t.World.Records.Player_42.Data.Buffs.SpeedBoostExpiresAt == nil, "в DataStore ещё ничего")
+	assert(logRecord(t.World, "b-save") == nil, "лог не пишется раньше профиля")
+	assert(t.Server.Receipt(receipt(42, "b-save", id), 1) == NOT_YET, "DataStore ещё лежит")
+
+	t.World.StoreError = nil
+	assert(t.Server.Receipt(receipt(42, "b-save", id), 1) == GRANTED)
+	assert(t.Data.Buffs.SpeedBoostExpiresAt == start + 20, "продлено ровно один раз")
+	assert(t.World.Records.Player_42.Data.Buffs.SpeedBoostExpiresAt == start + 20)
+end)
+
+test("Бафф: профиль сохранён, лог — нет, игрок перешёл на другой сервер — без второго продления", function()
+	local t = setup()
+	local id = productId(t.Config, "MagnetBoost")
+	local start = osTime(t.World)
+	failKeys(t.World, "UpdateAsync", "Receipt_")
+	assert(t.Server.Receipt(receipt(42, "b-move", id), 1) == NOT_YET)
+	t.World.StoreError = nil
+	t.Server.Release(t.Player)
+
+	local serverB = newServer(t.World, t.Config)
+	local dataB = serverB.Load(t.Player)
+	assert(dataB.Buffs.MagnetBoostExpiresAt == start + 20, "срок баффа переехал с профилем")
+	assert(serverB.Receipt(receipt(42, "b-move", id), 1) == GRANTED)
+	assert(dataB.Buffs.MagnetBoostExpiresAt == start + 20, "маркер в профиле не дал продлить второй раз")
+	assert(logRecord(t.World, "b-move"), "лог дописан новым сервером")
+end)
+
+test("Бафф: битый раздел Buffs — NotProcessedYet без маркера; после починки — выдача одна", function()
+	local t = setup()
+	local id = productId(t.Config, "SpeedBoost")
+	t.Data.Buffs = "сломано"
+	assert(t.Server.Receipt(receipt(42, "b-bad", id), 1) == NOT_YET)
+	assert(#t.Data.Monetization.ProcessedReceipts == 0, "маркер без выдачи не ставится")
+	assert(logRecord(t.World, "b-bad") == nil)
+
+	t.Data.Buffs = {}
+	local now = osTime(t.World)
+	assert(t.Server.Receipt(receipt(42, "b-bad", id), 1) == GRANTED)
+	assert(t.Data.Buffs.SpeedBoostExpiresAt == now + 20)
 end)
 
 return tests

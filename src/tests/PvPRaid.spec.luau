@@ -975,16 +975,16 @@ test("EssenceAtWindowStart фиксируется на старте окна и 
 	assert(d.PvP.StolenInWindow == t.Completed[3].Stolen)
 end)
 
-test("Профиль v8 мигрирует в v9: EssenceAtWindowStart = 0, остальное PvP не тронуто", function()
+test("Профиль v8 мигрирует до текущей: EssenceAtWindowStart = 0, остальное PvP не тронуто", function()
 	local world = Harness.NewWorld()
 	local _, dataSystem = world:NewServer()
-	assert(dataSystem.CURRENT_SCHEMA_VERSION == 9)
+	assert(dataSystem.CURRENT_SCHEMA_VERSION >= 9)
 	local v8 = {
 		Meta = { SchemaVersion = 8 },
 		PvP = { StolenInWindow = 700, StolenWindowStartsAt = 123, GuardsPlaced = {} },
 	}
 	local migrated = assert(dataSystem.MigrateProfileData(v8))
-	assert(migrated.Meta.SchemaVersion == 9)
+	assert(migrated.Meta.SchemaVersion == dataSystem.CURRENT_SCHEMA_VERSION)
 	assert(migrated.PvP.EssenceAtWindowStart == 0)
 	assert(migrated.PvP.StolenInWindow == 700 and migrated.PvP.StolenWindowStartsAt == 123)
 end)

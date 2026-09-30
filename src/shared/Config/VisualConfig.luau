@@ -81,6 +81,12 @@ export type VisualDefinition = {
 		CollectBurstCount: number,
 		LodDistance: number, -- дальше от камеры: частицы выключены, движение не обновляется
 		BiomeRingTransparency: number,
+		-- Магнитный сбор (Attributes.FragmentCollectMode = "Magnet"): кристалл летит к собравшему.
+		MagnetFlyDuration: number, -- сек полёта
+		MagnetFlyArc: number, -- studs: высота дуги в середине полёта
+		MagnetEndScale: number, -- масштаб кристалла у персонажа (0..1]
+		MagnetArriveBurstCount: number, -- частиц вспышки у персонажа
+		MagnetMaxFlights: number, -- одновременных полётов; сверх — обычная вспышка на месте
 	},
 
 	Pets: {
@@ -243,6 +249,11 @@ local VisualConfig: VisualDefinition = {
 		CollectBurstCount = 14,
 		LodDistance = 140,
 		BiomeRingTransparency = 0.55,
+		MagnetFlyDuration = 0.35,
+		MagnetFlyArc = 2,
+		MagnetEndScale = 0.3,
+		MagnetArriveBurstCount = 6,
+		MagnetMaxFlights = 16,
 	},
 
 	Pets = {
@@ -475,6 +486,11 @@ do
 	positive("Fragment.CollectBurstCount", c.Fragment.CollectBurstCount)
 	positive("Fragment.LodDistance", c.Fragment.LodDistance)
 	inRange("Fragment.BiomeRingTransparency", c.Fragment.BiomeRingTransparency, 0, 1)
+	positive("Fragment.MagnetFlyDuration", c.Fragment.MagnetFlyDuration)
+	nonNegative("Fragment.MagnetFlyArc", c.Fragment.MagnetFlyArc)
+	inRange("Fragment.MagnetEndScale", c.Fragment.MagnetEndScale, 0.05, 1)
+	positive("Fragment.MagnetArriveBurstCount", c.Fragment.MagnetArriveBurstCount)
+	positive("Fragment.MagnetMaxFlights", c.Fragment.MagnetMaxFlights)
 
 	positive("Pets.FollowBack", c.Pets.FollowBack)
 	positive("Pets.SideSpacing", c.Pets.SideSpacing)

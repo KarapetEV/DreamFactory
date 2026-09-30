@@ -207,6 +207,9 @@ local function tryPurchase(player: Player, upgradeId: unknown, targetLevel: unkn
 	if not track then
 		return "unknown-upgrade"
 	end
+	if track.Retired then
+		return "retired-upgrade" -- снят с продажи (UpgradeConfig.Retired): Essence не списываем
+	end
 
 	if not isFinite(targetLevel) or (targetLevel :: number) % 1 ~= 0 then
 		return "bad-argument"

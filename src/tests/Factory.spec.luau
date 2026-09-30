@@ -115,13 +115,22 @@ end)
 test("Каждый апгрейд пишет свой уровень в профиль", function()
 	local t = setup()
 	t.Data.Currency.Essence = 1_000_000
-	for _, id in { "StorageCapacity", "CollectionRadius", "CollectionSpeed" } do
+	for _, id in { "StorageCapacity", "CollectionSpeed" } do
 		t.Purchase(id, 1)
 	end
 	assert(t.Data.Factory.StorageCapacityLevel == 1)
-	assert(t.Data.Collection.RadiusLevel == 1)
 	assert(t.Data.Collection.SpeedLevel == 1)
 	assert(t.Data.Factory.ConveyorSpeedLevel == 0, "чужой уровень не тронут")
+end)
+
+test("Снятый с продажи CollectionRadius не покупается: уровень и Essence не тронуты", function()
+	local t = setup()
+	assert(t.Upgrades.CollectionRadius.Retired == true, "трек помечен Retired")
+	t.Data.Currency.Essence = 1_000_000
+	t.Data.Collection.RadiusLevel = 2 -- купленное до снятия с продажи остаётся в профиле
+	t.Purchase("CollectionRadius", 3)
+	assert(t.Data.Collection.RadiusLevel == 2, "уровень не поднят")
+	assert(t.Data.Currency.Essence == 1_000_000, "Essence не списана")
 end)
 
 test("Повтор того же запроса (двойной клик) не списывает второй раз", function()

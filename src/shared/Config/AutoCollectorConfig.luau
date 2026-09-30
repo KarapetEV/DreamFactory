@@ -1,11 +1,17 @@
 --!strict
 
 --[[
-	Авто-сборщик (геймпасс): сервер сам собирает фрагменты в радиусе сбора владельца, без
-	RequestCollect от клиента. Не секрет — лежит в shared. Логика — CollectionSystem.
+	Магнит сбора: сервер сам собирает фрагменты в радиусе магнита игрока, без RequestCollect
+	от клиента. Не секрет — лежит в shared. Логика — CollectionSystem.
 
-	Владение — только Monetization.GamePassesOwned (пишет MonetizationSystem по ответу Roblox).
-	Радиус — тот же, что у ручного сбора (апгрейд CollectionRadius × Nostalgic-петы).
+	Магнит есть у владельца геймпасса Авто-сборщика (Monetization.GamePassesOwned, пишет
+	MonetizationSystem по ответу Roblox) и у игрока с активным баффом Magnet Boost
+	(Buffs.MagnetBoostExpiresAt, BuffSystem). У обоих один и тот же радиус:
+	Radius × CollectionRadiusMultiplier надетых Nostalgic-петов. Апгрейд CollectionRadius снят
+	с продажи и радиус не меняет. Тот же радиус — верхняя граница дистанции ручного сбора
+	касанием (касание и так требует контакта; граница — анти-чит, а не механика).
+
+	Radius = 12 studs (заглушка для economy-balancer; = бывший BaseValue апгрейда CollectionRadius).
 
 	TickInterval = 1.5 с (заглушка для economy-balancer). Пассивный сбор идёт через ту же
 	транзакцию, что и ручной, с общим кулдауном — за тик собирается не больше одного фрагмента.
@@ -22,15 +28,17 @@ local UpgradeEffects = require(script.Parent.Parent.UpgradeEffects)
 export type AutoCollectorDefinition = {
 	GamePassId: string, -- Id записи в MonetizationConfig.GamePasses (и в GamePassesOwned)
 	TickInterval: number, -- секунд между тиками пассивного сбора
+	Radius: number, -- фиксированный радиус магнита, studs (до множителя Nostalgic-петов)
 }
 
 local AutoCollectorConfig: AutoCollectorDefinition = {
 	GamePassId = "AutoCollector",
 	TickInterval = 1.5,
+	Radius = 12,
 }
 
--- Проверки при загрузке: опечатка в Id тихо отключила бы геймпасс, а 0/NaN в интервале
--- превратили бы тик в busy-loop.
+-- Проверки при загрузке: опечатка в Id тихо отключила бы геймпасс, 0/NaN в интервале
+-- превратили бы тик в busy-loop, а NaN/inf в радиусе — магнит на всю карту.
 do
 	local found = false
 	for _, pass in MonetizationConfig.GamePasses do
@@ -46,6 +54,10 @@ do
 	assert(
 		UpgradeEffects.IsFinite(AutoCollectorConfig.TickInterval) and AutoCollectorConfig.TickInterval >= 0.25,
 		`AutoCollectorConfig: некорректный TickInterval {AutoCollectorConfig.TickInterval}`
+	)
+	assert(
+		UpgradeEffects.IsFinite(AutoCollectorConfig.Radius) and AutoCollectorConfig.Radius > 0,
+		`AutoCollectorConfig: некорректный Radius {AutoCollectorConfig.Radius}`
 	)
 end
 

@@ -3,6 +3,10 @@
 -- Эмоциональный окрас (GDD раздел 3): у видов петов (PetSpeciesConfig) и у фрагментов снов.
 export type EmotionType = "Joyful" | "Nostalgic" | "Fearful"
 
+-- Как собран фрагмент (атрибут Attributes.FragmentCollectMode — только для визуала):
+-- "Touch" — ручной RequestCollect по касанию, "Magnet" — сервер сам по радиусу магнита.
+export type CollectMode = "Touch" | "Magnet"
+
 -- Буфер сырых фрагментов по эмоциям (Factory.RawFragments). Сумма по типам ≤ ёмкости склада
 -- (апгрейд StorageCapacity). Сумма и проверки — FragmentBuffer.
 export type FragmentBuffer = {
@@ -79,6 +83,12 @@ export type PlayerProfile = {
 		BattlePassTier: number, -- 0..MaxTier, достигнутый тир
 		BattlePassXP: number, -- XP внутри текущего тира (0 на MaxTier)
 		BattlePassPremium: boolean, -- премиум-ветка куплена в сезоне BattlePassSeasonId
+	},
+	-- Временные платные баффы (BuffSystem, BuffConfig): os.time() конца баффа, nil — не покупался.
+	-- Стекинг — продление: max(текущий, now) + Duration. Истёкшее значение не стирается.
+	Buffs: {
+		MagnetBoostExpiresAt: number?,
+		SpeedBoostExpiresAt: number?,
 	},
 	Meta: {
 		FirstJoinAt: number,

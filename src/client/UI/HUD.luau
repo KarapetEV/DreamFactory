@@ -1,7 +1,7 @@
 --!strict
 
 --[[
-	HUD (MVP, раздел 5.8 ТЗ): счётчик Essence и кнопки апгрейда для всех треков UpgradeConfig.
+	HUD (MVP, раздел 5.8 ТЗ): счётчик Essence и кнопки апгрейда для треков UpgradeConfig, кроме снятых с продажи (Retired).
 
 	- Всё, что показывается про игрока (Essence, сырые фрагменты, уровни), — из последнего
 	  снимка сервера (Remotes.EconomySnapshot); ёмкость склада — из уровня через UpgradeEffects.
@@ -43,11 +43,11 @@ local REBIRTH_RESULT_SECONDS = 2.5
 
 -- Порядок строк и подписи значений эффектов. Строки UI пока здесь; в таблицу локализации
 -- (раздел 10 ТЗ) переедут вместе с остальным UI.
-local TRACK_ORDER = { "ConveyorSpeed", "StorageCapacity", "CollectionRadius", "CollectionSpeed" }
+-- CollectionRadius снят с продажи (UpgradeConfig.Retired) — строки нет.
+local TRACK_ORDER = { "ConveyorSpeed", "StorageCapacity", "CollectionSpeed" }
 local VALUE_FORMATS: { [string]: string } = {
 	ConveyorSpeed = "%.2f с/цикл",
 	StorageCapacity = "%.0f фрагм.",
-	CollectionRadius = "%.0f studs",
 	CollectionSpeed = "%.2f с",
 }
 local TEXT = {
@@ -73,6 +73,7 @@ local BUTTON_DISABLED = Color3.fromRGB(90, 90, 90)
 
 for _, id in TRACK_ORDER do
 	assert(UpgradeConfig[id], `HUD: трек {id} отсутствует в UpgradeConfig`)
+	assert(not UpgradeConfig[id].Retired, `HUD: трек {id} снят с продажи`)
 end
 
 type Row = {

@@ -3,7 +3,7 @@
 	сдвигает (одно предупреждение за окно), восстановление после скачка — не быстрее ходьбы,
 	частые запросы не разгоняют точку выше потолка, респавн через CharacterAdded — не скачок
 	(база только с позиции спавна), окно скорости скользящее, вертикальные потолки, NaN,
-	период без корня, выход игрока.
+	период без корня, выход игрока, легитимное ускорение (Speed Boost через BuffSystem) и его снятие.
 
 	Запуск: lune run src/tests/run (из корня репозитория).
 ]]
@@ -22,7 +22,15 @@ end
 -- фонового замера).
 local function setup(init: boolean?)
 	local world = Harness.NewWorld()
-	local load = world:ModuleLoader()
+	-- DataSystem — профили в памяти (для BuffSystem в тестах Speed Boost; MovementGuard его не читает).
+	local profiles = {}
+	local load = world:ModuleLoader({
+		["src/server/Systems/DataSystem"] = {
+			GetData = function(p)
+				return profiles[p]
+			end,
+		},
+	})
 	local guard = load("src/server/Services/MovementGuard")
 	local config = load("src/server/Config/MovementGuardConfig")
 	-- Vector3 модулей: строим от готового объекта из конфига (та же метатаблица).
@@ -37,7 +45,7 @@ local function setup(init: boolean?)
 		guard.Init()
 	end
 
-	local t = { World = world, Guard = guard, Config = config, Vec = vec }
+	local t = { World = world, Guard = guard, Config = config, Vec = vec, Load = load, Profiles = profiles }
 
 	-- Игрок заходит и спавнится в (x, y, z); базовая точка взята к возврату.
 	function t.Join(userId: number, x: number?, y: number?, z: number?)
@@ -414,6 +422,122 @@ test("MovementGuardConfig: load-time assert ловит неположитель�
 	assert(not ok and string.find(tostring(err), "MaxHorizontalSpeed", 1, true), `assert потолка: {err}`)
 	ok, err = loadPatched("RecoverySpeed = 20", "RecoverySpeed = 50")
 	assert(not ok and string.find(tostring(err), "RecoverySpeed", 1, true), `assert RecoverySpeed: {err}`)
+end)
+
+------------------------------------------------------------------------------------------
+-- Легитимное ускорение: бафф Speed Boost (BuffSystem → SetSpeedMultiplier)
+------------------------------------------------------------------------------------------
+
+-- BuffSystem в том же «сервере», что и MovementGuard (общий кэш модулей).
+local function withBuffs(t)
+	local buffs = t.Load("src/server/Systems/BuffSystem")
+	buffs.Init()
+	return buffs, t.Load("src/shared/Config/BuffConfig")
+end
+
+-- Бег по X со скоростью speed studs/s шагами по 0.1 с; после каждого шага — запрос позиции.
+local function run(t, player, root, speed: number, seconds: number)
+	for _ = 1, math.round(seconds / 0.1) do
+		root.Position = t.Vec(root.Position.X + speed * 0.1, 0, 0)
+		t.World:Advance(0.1)
+		t.Trusted(player)
+	end
+end
+
+-- Лаг репликации посреди бега: stall секунд позиция на сервере стоит, потом догоняет рывком.
+local function lagSpike(t, player, root, speed: number, stall: number)
+	t.World:Advance(stall)
+	root.Position = t.Vec(root.Position.X + speed * stall, 0, 0)
+	return t.Trusted(player)
+end
+
+test("Speed Boost: бег на скорости баффа с лагом репликации не флагается (без баффа — флагается)", function()
+	-- Контроль: тот же бег без баффа — скачок сверх потолка.
+	local control = setup()
+	local cPlayer, cRoot = control.Join(1)
+	run(control, cPlayer, cRoot, 32, 10)
+	lagSpike(control, cPlayer, cRoot, 32, 0.6)
+	assert(control.GuardWarnings() == 1, "без баффа такой бег — подозрительный скачок")
+
+	local t = setup()
+	local buffs, buffConfig = withBuffs(t)
+	local speed = buffConfig.Buffs.SpeedBoost.WalkSpeed
+	assert(speed == 32, "тест рассчитан на WalkSpeed баффа 32")
+	local player, root, humanoid = t.Join(1)
+	local data = { Buffs = {} }
+	t.Profiles[player] = data
+	assert(buffs.Grant(player, data, "SpeedBoost"))
+	assert(humanoid.WalkSpeed == speed)
+
+	run(t, player, root, speed, 10)
+	local x = root.Position.X
+	assert(at(lagSpike(t, player, root, speed, 0.6), x + speed * 0.6, 0, 0), "рывок после лага принят")
+	run(t, player, root, speed, 5)
+	lagSpike(t, player, root, speed, 0.6)
+	assert(t.GuardWarnings() == 0, `игрок с баффом не флагается, предупреждений {t.GuardWarnings()}`)
+	assert(at(t.Trusted(player), root.Position.X, 0, 0), "доверенная позиция идёт за персонажем")
+end)
+
+test("Speed Boost истёк: грейс SpeedDropGrace на стыке, дальше — обычные потолки", function()
+	local t = setup()
+	local buffs, buffConfig = withBuffs(t)
+	local speed = buffConfig.Buffs.SpeedBoost.WalkSpeed
+	local player, root, humanoid = t.Join(1)
+	local data = { Buffs = {} }
+	t.Profiles[player] = data
+	assert(buffs.Grant(player, data, "SpeedBoost")) -- истекает на 20-й секунде
+
+	-- Бафф снят на ~20.0 с, персонаж по инерции ещё бежит быстро и ловит лаг — в пределах грейса.
+	run(t, player, root, speed, 20.5)
+	assert(humanoid.WalkSpeed == buffConfig.BaseWalkSpeed, "WalkSpeed вернулся к базовой")
+	lagSpike(t, player, root, speed, 0.6)
+	assert(t.GuardWarnings() == 0, "на стыке истечения честного игрока не флагает")
+
+	-- Грейс прошёл, а игрок всё ещё движется со скоростью баффа — как без баффа.
+	run(t, player, root, speed, 1.5)
+	lagSpike(t, player, root, speed, 0.6)
+	assert(t.GuardWarnings() == 1, "после грейса ускорение без баффа — снова скачок")
+end)
+
+test("Speed Boost не пропускает телепорт: скачок далеко за потолком баффа отклоняется", function()
+	local t = setup()
+	local buffs = withBuffs(t)
+	local player, root = t.Join(1)
+	local data = { Buffs = {} }
+	t.Profiles[player] = data
+	assert(buffs.Grant(player, data, "SpeedBoost"))
+	run(t, player, root, 32, 2)
+	local x = root.Position.X
+
+	root.Position = t.Vec(x + 500, 0, 0)
+	assert(at(t.Trusted(player), x, 0, 0), "доверенная точка не сдвинута")
+	assert(t.GuardWarnings() == 1)
+end)
+
+test("SetSpeedMultiplier: зажат MaxSpeedMultiplier, NaN/ниже 1 — считается 1", function()
+	local t = setup()
+	local player, root = t.Join(1)
+	t.World:Advance(1)
+
+	t.Guard.SetSpeedMultiplier(player, 100)
+	t.World:Advance(1)
+	-- При ×100 прошёл бы; при потолке ×MaxSpeedMultiplier — нет.
+	root.Position = t.Vec(t.Config.MaxHorizontalSpeed * t.Config.MaxSpeedMultiplier + 100, 0, 0)
+	assert(at(t.Trusted(player), 0, 0, 0), "множитель зажат")
+
+	local t2 = setup()
+	local p2, r2 = t2.Join(1)
+	t2.World:Advance(1)
+	t2.Guard.SetSpeedMultiplier(p2, 0 / 0)
+	t2.Guard.SetSpeedMultiplier(p2, 0.2)
+	t2.World:Advance(1)
+	r2.Position = t2.Vec(t2.Config.MaxHorizontalSpeed * 2, 0, 0)
+	assert(at(t2.Trusted(p2), 0, 0, 0), "NaN и множитель < 1 не ослабляют проверку")
+	local warned = false
+	for _, text in t2.World.Warnings do
+		warned = warned or string.find(text, "Некорректный множитель", 1, true) ~= nil
+	end
+	assert(warned, "NaN записан в лог")
 end)
 
 return tests

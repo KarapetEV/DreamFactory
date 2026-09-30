@@ -14,7 +14,9 @@
 	Игрок (Player):
 	  EquippedPets     — EquippedPetsCodec.Encode надетых петов, дающих бонус (PetSystem);
 	  ShieldExpiresAt  — os.time() конца PvP-щита, nil — щита нет (PvPRaidSystem);
-	  RaidedCount      — сколько раз игрока ограбили за сессию на этом сервере (PvPRaidSystem).
+	  RaidedCount      — сколько раз игрока ограбили за сессию на этом сервере (PvPRaidSystem);
+	  MagnetBoostExpiresAt / SpeedBoostExpiresAt — os.time() конца действующего баффа, nil — баффа
+	                     нет (BuffSystem; магазин показывает остаток по Workspace:GetServerTimeNow()).
 ]]
 
 return {
@@ -25,4 +27,6 @@ return {
 	EquippedPets = "EquippedPets",
 	ShieldExpiresAt = "ShieldExpiresAt",
 	RaidedCount = "RaidedCount",
+	MagnetBoostExpiresAt = "MagnetBoostExpiresAt",
+	SpeedBoostExpiresAt = "SpeedBoostExpiresAt",
 }

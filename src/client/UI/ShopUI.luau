@@ -9,8 +9,14 @@
 	  купленного нельзя. Покупка — прямой MarketplaceService:PromptGamePassPurchase, без
 	  RemoteEvent: платёж проводит Roblox, владение потом перечитывает сервер и присылает
 	  в EconomySnapshot.GamePassesOwned (по нему кнопка становится «Куплено»).
-	- «Разовые покупки» и «Сезонный пропуск»: статичные позиции-заглушки с неактивными
-	  кнопками «Скоро» (реальные покупки — S12).
+	- «Разовые покупки»: дев-продукты из DevProductConfig — паки Эссенции и временные баффы
+	  (состав и состояние кнопки — чистый OneTimeOffers). Цена — живая, GetProductInfo с
+	  Enum.InfoType.Product; покупка — MarketplaceService:PromptProductPurchase, без RemoteEvent:
+	  выдачу делает сервер по квитанции Roblox (ProcessReceipt), клиент ничего не докладывает.
+	  Покупать можно повторно; у действующего баффа — остаток «активен ещё N с» по атрибуту игрока
+	  (Attributes.<Id>ExpiresAt, пишет BuffSystem), повторная покупка его продлевает. Magnet Boost
+	  владельцу Авто-сборщика не предлагается. Вкладка прокручивается.
+	- «Сезонный пропуск»: статичные позиции-заглушки с неактивными кнопками «Скоро».
 
 	Клиент ничего не решает о владении: «Куплено» = Id есть в последнем снимке сервера.
 	Снимок и кнопка меню приходят от HUD (см. SnapshotSource) — ShopUI не подписывается
@@ -20,14 +26,18 @@
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
 local Types = require(ReplicatedStorage.shared.Types)
 local Loc = require(ReplicatedStorage.shared.Loc)
 local Signal = require(ReplicatedStorage.shared.Signal)
 local MonetizationConfig = require(ReplicatedStorage.shared.Config.MonetizationConfig)
+local DevProductConfig = require(ReplicatedStorage.shared.Config.DevProductConfig)
+local OneTimeOffers = require(script.Parent.OneTimeOffers)
 
 type EconomySnapshot = Types.EconomySnapshot
 type GamePassDefinition = MonetizationConfig.GamePassDefinition
+type DevProductDefinition = DevProductConfig.DevProductDefinition
 
 export type SnapshotSource = {
 	GetSnapshot: () -> EconomySnapshot?,
@@ -54,16 +64,20 @@ local TEXT = {
 	Unavailable = Loc.Get("ShopUI.Unavailable"),
 	SoonButton = Loc.Get("ShopUI.SoonButton"),
 	SoonPrice = Loc.Get("ShopUI.SoonPrice"),
+	ProductNotConfigured = Loc.Get("ShopUI.ProductNotConfigured"),
+	BuffActive = Loc.Get("ShopUI.BuffActive"),
+	IncludedInPass = Loc.Get("ShopUI.IncludedInPass"),
 }
 
--- Позиции-заглушки вкладок, которые появятся в S12. Реальных Id/цен нет намеренно.
+-- Позиции-заглушки вкладки, которая ещё не подключена. Реальных Id/цен нет намеренно.
 local PLACEHOLDERS: { [string]: { string } } = {
-	OneTime = { "Пачка Essence", "Ускоритель на 15 минут", "Набор декора фабрики" },
 	Season = { "Сезонный пропуск: бесплатная ветка", "Сезонный пропуск: платная ветка" },
 }
 
 -- После клика «Купить» кнопка заблокирована на это время (окно покупки открывает Roblox).
 local PROMPT_DEBOUNCE = 2
+-- Как часто обновлять остаток действующего баффа, пока магазин открыт (сек).
+local BUFF_TIMER_INTERVAL = 0.5
 
 local ROW_HEIGHT = 56
 local COLOR_PANEL = Color3.fromRGB(30, 25, 50)
@@ -73,7 +87,7 @@ local COLOR_BUY = Color3.fromRGB(80, 170, 90)
 local COLOR_DISABLED = Color3.fromRGB(90, 90, 90)
 
 type PriceState = {
-	Status: "Idle" | "Loading" | "Ready" | "NotForSale" | "Failed",
+	Status: OneTimeOffers.PriceStatus,
 	Robux: number?,
 }
 
@@ -86,13 +100,23 @@ type PassRow = {
 	Button: TextButton,
 }
 
+type ProductRow = {
+	Product: DevProductDefinition,
+	Price: PriceState,
+	PromptLockedUntil: number,
+	BuffAttribute: string?, -- атрибут игрока со сроком баффа; nil — не бафф
+	PriceLabel: TextLabel,
+	Button: TextButton,
+}
+
 local ShopUI = {}
 
 local source: SnapshotSource
 local gui: ScreenGui
-local tabFrames: { [string]: Frame } = {}
+local tabFrames: { [string]: GuiObject } = {}
 local tabButtons: { [string]: TextButton } = {}
 local passRows: { PassRow } = {}
+local productRows: { ProductRow } = {}
 local currentTab = "GamePasses"
 
 local function makeLabel(parent: Instance, text: string, size: UDim2, position: UDim2): TextLabel
@@ -169,25 +193,79 @@ local function refreshPassRow(row: PassRow)
 	end
 end
 
+-- Текст строки цены дев-продукта.
+local function priceText(price: PriceState): string
+	if price.Status == "Ready" and price.Robux then
+		return string.format(TEXT.Price, price.Robux)
+	elseif price.Status == "NotForSale" then
+		return TEXT.NotForSale
+	elseif price.Status == "Failed" then
+		return TEXT.PriceFailed
+	end
+	return TEXT.PriceLoading
+end
+
+local function ownedPassesFromSnapshot(): { string }?
+	local snapshot = source.GetSnapshot()
+	return if snapshot and type(snapshot.GamePassesOwned) == "table" then snapshot.GamePassesOwned else nil
+end
+
+local function refreshProductRow(row: ProductRow)
+	local product = row.Product
+	local text = if product.ProductId == 0 then TEXT.ProductNotConfigured else priceText(row.Price)
+	if row.BuffAttribute then
+		local left = OneTimeOffers.BuffSecondsLeft(
+			Players.LocalPlayer:GetAttribute(row.BuffAttribute),
+			Workspace:GetServerTimeNow()
+		)
+		if left then
+			text ..= " · " .. string.format(TEXT.BuffActive, left)
+		end
+	end
+	row.PriceLabel.Text = text
+
+	local state = OneTimeOffers.ButtonState(
+		product,
+		row.Price.Status,
+		ownedPassesFromSnapshot(),
+		os.clock() < row.PromptLockedUntil
+	)
+	if state == "Buy" then
+		setButton(row.Button, TEXT.Buy, true)
+	elseif state == "Included" then
+		setButton(row.Button, TEXT.IncludedInPass, false)
+	elseif state == "Waiting" then
+		setButton(row.Button, TEXT.Waiting, false)
+	else
+		setButton(row.Button, TEXT.Unavailable, false)
+	end
+end
+
+local function refreshProducts()
+	for _, row in productRows do
+		refreshProductRow(row)
+	end
+end
+
 local function refreshAll()
 	for _, row in passRows do
 		refreshPassRow(row)
 	end
+	refreshProducts()
 end
 
--- Живая цена геймпасса. Успех/«не продаётся» запоминаем на сессию; сбой — повторим при
--- следующем открытии магазина.
-local function fetchPrice(row: PassRow)
-	local price = row.Price
-	if row.Pass.GamePassId == 0 or price.Status == "Loading" or price.Status == "Ready" or price.Status == "NotForSale" then
+-- Живая цена геймпасса или дев-продукта. Успех/«не продаётся» запоминаем на сессию; сбой —
+-- повторим при следующем открытии магазина. onChanged перерисовывает строку.
+local function fetchPrice(price: PriceState, id: number, infoType: Enum.InfoType, onChanged: () -> ())
+	if id == 0 or price.Status == "Loading" or price.Status == "Ready" or price.Status == "NotForSale" then
 		return
 	end
 	price.Status = "Loading"
-	refreshPassRow(row)
+	onChanged()
 
 	task.spawn(function()
 		local ok, info = pcall(function()
-			return MarketplaceService:GetProductInfo(row.Pass.GamePassId, Enum.InfoType.GamePass)
+			return MarketplaceService:GetProductInfo(id, infoType)
 		end)
 		if not ok or type(info) ~= "table" then
 			price.Status = "Failed"
@@ -200,7 +278,7 @@ local function fetchPrice(row: PassRow)
 				price.Robux = robux
 			end
 		end
-		refreshPassRow(row)
+		onChanged()
 	end)
 end
 
@@ -224,6 +302,24 @@ local function onBuyClicked(row: PassRow)
 	end)
 end
 
+local function onProductBuyClicked(row: ProductRow)
+	local locked = os.clock() < row.PromptLockedUntil
+	if OneTimeOffers.ButtonState(row.Product, row.Price.Status, ownedPassesFromSnapshot(), locked) ~= "Buy" then
+		return
+	end
+
+	row.PromptLockedUntil = os.clock() + PROMPT_DEBOUNCE
+	refreshProductRow(row)
+	task.delay(PROMPT_DEBOUNCE, function()
+		refreshProductRow(row)
+	end)
+
+	-- Платёж проводит Roblox; выдачу делает сервер по квитанции (ProcessReceipt).
+	pcall(function()
+		MarketplaceService:PromptProductPurchase(Players.LocalPlayer, row.Product.ProductId)
+	end)
+end
+
 local function setTab(name: string)
 	currentTab = name
 	for id, frame in tabFrames do
@@ -234,7 +330,7 @@ local function setTab(name: string)
 	end
 end
 
-local function buildPlaceholderTab(parent: Frame, names: { string })
+local function buildPlaceholderTab(parent: GuiObject, names: { string })
 	for index, name in names do
 		local y = 8 + (index - 1) * ROW_HEIGHT
 		makeLabel(parent, name, UDim2.fromOffset(250, 24), UDim2.fromOffset(8, y))
@@ -279,7 +375,17 @@ local function build(): ScreenGui
 		end)
 		tabButtons[tab.Id] = button
 
-		local frame = Instance.new("Frame")
+		-- «Разовые покупки» не влезают в панель — вкладка прокручивается.
+		local frame: GuiObject
+		if tab.Id == "OneTime" then
+			local scrolling = Instance.new("ScrollingFrame")
+			scrolling.ScrollingDirection = Enum.ScrollingDirection.Y
+			scrolling.ScrollBarThickness = 6
+			scrolling.BorderSizePixel = 0
+			frame = scrolling
+		else
+			frame = Instance.new("Frame")
+		end
 		frame.Size = UDim2.fromOffset(394, 230)
 		frame.Position = UDim2.fromOffset(8, 82)
 		frame.BackgroundTransparency = 1
@@ -306,7 +412,27 @@ local function build(): ScreenGui
 		table.insert(passRows, row)
 	end
 
-	buildPlaceholderTab(tabFrames.OneTime, PLACEHOLDERS.OneTime)
+	-- Вкладка разовых покупок: по строке на дев-продукт (OneTimeOffers.List).
+	local oneTimeFrame = tabFrames.OneTime :: ScrollingFrame
+	local offers = OneTimeOffers.List()
+	for index, product in offers do
+		local y = 8 + (index - 1) * ROW_HEIGHT
+		makeLabel(oneTimeFrame, product.DisplayName, UDim2.fromOffset(250, 24), UDim2.fromOffset(8, y))
+		local row: ProductRow = {
+			Product = product,
+			Price = { Status = "Idle", Robux = nil },
+			PromptLockedUntil = 0,
+			BuffAttribute = OneTimeOffers.BuffAttribute(product),
+			PriceLabel = makeLabel(oneTimeFrame, "", UDim2.fromOffset(250, 18), UDim2.fromOffset(8, y + 26)),
+			Button = makeButton(oneTimeFrame, UDim2.fromOffset(120, 36), UDim2.fromOffset(258, y + 4)),
+		}
+		row.Button.Activated:Connect(function()
+			onProductBuyClicked(row)
+		end)
+		table.insert(productRows, row)
+	end
+	oneTimeFrame.CanvasSize = UDim2.fromOffset(0, 8 + #offers * ROW_HEIGHT)
+
 	buildPlaceholderTab(tabFrames.Season, PLACEHOLDERS.Season)
 
 	setTab(currentTab)
@@ -317,7 +443,14 @@ function ShopUI.Toggle()
 	gui.Enabled = not gui.Enabled
 	if gui.Enabled then
 		for _, row in passRows do
-			fetchPrice(row)
+			fetchPrice(row.Price, row.Pass.GamePassId, Enum.InfoType.GamePass, function()
+				refreshPassRow(row)
+			end)
+		end
+		for _, row in productRows do
+			fetchPrice(row.Price, row.Product.ProductId, Enum.InfoType.Product, function()
+				refreshProductRow(row)
+			end)
 		end
 		refreshAll()
 	end
@@ -332,6 +465,25 @@ function ShopUI.Init(snapshotSource: SnapshotSource)
 
 	source.SnapshotChanged:Connect(refreshAll)
 	source.AddMenuButton(TEXT.Menu, ShopUI.Toggle)
+
+	-- Срок баффа сменился (покупка, истечение) — сразу; остаток тикает, пока вкладка открыта.
+	local localPlayer = Players.LocalPlayer
+	for _, row in productRows do
+		local attribute = row.BuffAttribute
+		if attribute then
+			localPlayer:GetAttributeChangedSignal(attribute):Connect(function()
+				refreshProductRow(row)
+			end)
+		end
+	end
+	task.spawn(function()
+		while true do
+			task.wait(BUFF_TIMER_INTERVAL)
+			if gui.Enabled and currentTab == "OneTime" then
+				refreshProducts()
+			end
+		end
+	end)
 end
 
 return ShopUI

@@ -20,12 +20,16 @@
 	  когда меняется нужное значение или Humanoid — чужие правки WalkSpeed тик не перетирает
 	  без причины. Клиентского входа нет: локальная правка WalkSpeed на клиенте не поднимает
 	  потолок MovementGuard, эксплойтер со спидхаком ловится как раньше.
+	- Для магазина (ShopUI, «Разовые покупки») срок действующего баффа выставляется атрибутом
+	  игрока Attributes.<Id>ExpiresAt (nil — не действует) — там же, где применяются эффекты.
+	  Только отображение: сервер атрибут не читает.
 ]]
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Types = require(ReplicatedStorage.shared.Types)
+local Attributes = require(ReplicatedStorage.shared.Attributes)
 local UpgradeEffects = require(ReplicatedStorage.shared.UpgradeEffects)
 local BuffConfig = require(ReplicatedStorage.shared.Config.BuffConfig)
 local MovementGuardConfig = require(script.Parent.Parent.Config.MovementGuardConfig)
@@ -51,6 +55,7 @@ local EXPIRES_FIELD: { [BuffId]: string } = {
 
 for _, id in BuffConfig.BuffIds do
 	assert(EXPIRES_FIELD[id], `BuffSystem: нет поля профиля для баффа {id}`)
+	assert((Attributes :: any)[EXPIRES_FIELD[id]], `BuffSystem: нет атрибута {EXPIRES_FIELD[id]} в Attributes`)
 end
 -- Потолок MovementGuard зажимает множитель: бафф быстрее него флагал бы честных игроков.
 assert(
@@ -108,6 +113,15 @@ local function applyEffects(player: Player, data: PlayerProfile)
 	-- Сначала потолок, потом скорость: рост потолка — сразу, снижение MovementGuard сам
 	-- растягивает на SpeedDropGrace, пока клиент получает новый WalkSpeed.
 	MovementGuard.SetSpeedMultiplier(player, walkSpeed / BuffConfig.BaseWalkSpeed)
+
+	-- Срок для магазина: атрибут только при изменении (репликация — лишь по факту смены).
+	for _, id in BuffConfig.BuffIds do
+		local name = (Attributes :: any)[EXPIRES_FIELD[id]]
+		local expiresAt = BuffSystem.GetExpiresAt(data, id)
+		if player:GetAttribute(name) ~= expiresAt then
+			player:SetAttribute(name, expiresAt)
+		end
+	end
 
 	local character = player.Character
 	local humanoid = if character then character:FindFirstChildOfClass("Humanoid") else nil

@@ -60,6 +60,9 @@ Loc.Strings = {
 	["ShopUI.Unavailable"] = { ru = "Недоступно", en = "Unavailable" },
 	["ShopUI.SoonButton"] = { ru = "Скоро", en = "Soon" },
 	["ShopUI.SoonPrice"] = { ru = "Цена появится позже", en = "Price coming later" },
+	["ShopUI.ProductNotConfigured"] = { ru = "Продукт не настроен", en = "Product not set up" },
+	["ShopUI.BuffActive"] = { ru = "активен ещё %d с", en = "active for %d s" },
+	["ShopUI.IncludedInPass"] = { ru = "Есть в геймпассе", en = "In your pass" },
 
 	-- PetInventoryUI
 	["PetInventoryUI.Title"] = { ru = "Питомцы", en = "Pets" },

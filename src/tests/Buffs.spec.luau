@@ -224,6 +224,31 @@ test("Speed Boost: респавн под баффом — новый Humanoid п
 	assert(humanoid.WalkSpeed == t.Config.Buffs.SpeedBoost.WalkSpeed, tostring(humanoid.WalkSpeed))
 end)
 
+test("Атрибуты срока для магазина: ставятся при Grant, продлеваются, снимаются по истечении", function()
+	local t = setup()
+	local player, data = t.AddPlayer(1)
+	local start = osTime(t.World)
+	t.World:Advance(0.5)
+	assert(player:GetAttribute("MagnetBoostExpiresAt") == nil, "без баффа атрибута нет")
+
+	assert(t.Buffs.Grant(player, data, "MagnetBoost"))
+	assert(player:GetAttribute("MagnetBoostExpiresAt") == start + 20, "сразу при Grant")
+	assert(player:GetAttribute("SpeedBoostExpiresAt") == nil, "другой бафф не выдан")
+	assert(t.Buffs.Grant(player, data, "MagnetBoost"))
+	assert(player:GetAttribute("MagnetBoostExpiresAt") == start + 40, "продление видно сразу")
+
+	t.World:Advance(41)
+	assert(player:GetAttribute("MagnetBoostExpiresAt") == nil, "истёк — атрибут снят тиком")
+end)
+
+test("Атрибут срока подхватывается с профиля при входе (бафф куплен в прошлой сессии)", function()
+	local t = setup()
+	local player, data = t.AddPlayer(1)
+	data.Buffs.SpeedBoostExpiresAt = osTime(t.World) + 15
+	t.World:Advance(t.Config.TickInterval + 0.01)
+	assert(player:GetAttribute("SpeedBoostExpiresAt") == data.Buffs.SpeedBoostExpiresAt)
+end)
+
 test("Magnet Boost не трогает WalkSpeed; тик не перетирает WalkSpeed без изменения баффа", function()
 	local t = setup()
 	local player, data, humanoid = t.AddPlayer(1)

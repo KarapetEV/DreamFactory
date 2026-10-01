@@ -10,8 +10,10 @@
 	- Дальше VisualConfig.Fragment.LodDistance от камеры кристалл не двигается и не пылит.
 	- Исчезновение фрагмента (сбор кем угодно) — вспышка частиц через общий бюджет Particles.Burst:
 	  при плотном сборе лишние вспышки отбрасываются.
-	- Магнитный сбор (сервер ставит на Part перед Destroy Attributes.FragmentCollectMode = "Magnet"
-	  и FragmentCollectedBy = UserId): вместо вспышки на месте кристалл за MagnetFlyDuration летит
+	- Магнитный сбор (сервер ставит на Part Attributes.FragmentCollectMode = "Magnet" и
+	  FragmentCollectedBy = UserId, а сам Part уничтожает кадром позже — атрибут из одного кадра с
+	  Destroy клиенту не приходит): полёт стартует по появлению атрибута, не дожидаясь
+	  ChildRemoved. Вместо вспышки на месте кристалл за MagnetFlyDuration летит
 	  по дуге к HumanoidRootPart собравшего, уменьшаясь, и вспыхивает у персонажа. Решение и
 	  поза — чистый MagnetFlight. Нет персонажа, фрагмент вне LOD или лимит полётов — обычная
 	  вспышка. Касание ("Touch") выглядит как раньше. Атрибуты — только визуал: сбор уже
@@ -60,6 +62,9 @@ local entries: { [BasePart]: Entry } = {}
 local flights: { Flight } = {}
 local folder: Folder
 
+-- Сигнал сбора на Part (атрибут FragmentCollectMode); определена ниже, рядом со startFlight.
+local onCollectSignal: (part: BasePart) -> ()
+
 local function track(instance: Instance)
 	if not instance:IsA("BasePart") or entries[instance] then
 		return
@@ -106,6 +111,10 @@ local function track(instance: Instance)
 	}
 	entries[instance] = entry
 	rig:Update(base, 0, 1, base)
+
+	instance:GetAttributeChangedSignal(Attributes.FragmentCollectMode):Connect(function()
+		onCollectSignal(instance)
+	end)
 end
 
 -- Корень персонажа собравшего игрока (nil — игрок вышел / персонажа нет).
@@ -142,6 +151,15 @@ local function startFlight(instance: Instance, entry: Entry): boolean
 		Color = entry.Color,
 	})
 	return true
+end
+
+-- Сбор помечен сервером: магнитный — сразу в полёт (Part исчезнет кадром позже, untrack его
+-- уже не найдёт); касание — ничего, вспышка при исчезновении Part, как раньше.
+onCollectSignal = function(part: BasePart)
+	local entry = entries[part]
+	if entry and startFlight(part, entry) then
+		entries[part] = nil
+	end
 end
 
 local function untrack(instance: Instance)

@@ -438,6 +438,7 @@ test("Интеграция: Nostalgic-пет реально увеличивае
 		placeCharacter(t, fragment.Position + offset)
 		t.World:Advance(5) -- кулдаун сбора и rate limit не мешают
 		t.Call("RequestCollect", fragment:GetAttribute("FragmentId"))
+		t.World:Advance(0.05) -- Part собранного фрагмента уничтожается через кадр
 	end
 
 	collectFrom(fragments[1])

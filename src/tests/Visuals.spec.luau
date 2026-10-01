@@ -452,4 +452,27 @@ test("MagnetFlight: поза — старт на фрагменте, дуга в
 	assert(broken.Done, "NaN во времени — сразу Done, кристалл не зависает в мире")
 end)
 
+------------------------------------------------------------------------------------------
+-- SpeedTrail: шлейф под баффом Speed Boost
+------------------------------------------------------------------------------------------
+
+test("SpeedTrail: шлейф, пока срок из атрибута в будущем по серверному времени; мусор — без шлейфа", function()
+	local trail = load("src/client/Visuals/SpeedTrail")
+	assert(trail.IsActive(1_000_020, 1_000_000), "бафф действует")
+	assert(trail.IsActive(1_000_020, 1_000_019.9), "последние доли секунды — ещё действует")
+	assert(not trail.IsActive(1_000_020, 1_000_020), "ровно истёк")
+	assert(not trail.IsActive(nil, 0), "атрибута нет — баффа нет")
+	assert(not trail.IsActive("1000020", 0) and not trail.IsActive(0 / 0, 0) and not trail.IsActive(math.huge, 0))
+end)
+
+test("VisualConfig.SpeedTrail: прозрачность вне [0, 1] роняет загрузку", function()
+	loadFails(
+		"src/shared/Config/VisualConfig",
+		function(source)
+			return replaceOnce(source, "StartTransparency = 0.15,", "StartTransparency = 1.5,")
+		end,
+		"SpeedTrail.StartTransparency"
+	)
+end)
+
 return tests

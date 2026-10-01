@@ -89,6 +89,7 @@ local function collectionSetup()
 		}
 		world:Advance(10)
 		handlers.RequestCollect(player, fragment:GetAttribute("FragmentId"))
+		world:Advance(0.05) -- Part собранного фрагмента уничтожается через кадр
 	end
 
 	return t

@@ -105,8 +105,10 @@ local function setup(magnetRadius: number?)
 	end
 
 	-- Одна итерация тика авто-сборщика (плюс запас, чтобы тик точно отработал).
+	-- Запас 0.05 с: Part собранного фрагмента уничтожается через кадр после сбора
+	-- (task.wait() в Harness — 0.03 виртуальной секунды).
 	function t.Tick(count: number?)
-		world:Advance(autoConfig.TickInterval * (count or 1) + 0.01)
+		world:Advance(autoConfig.TickInterval * (count or 1) + 0.05)
 	end
 
 	return t
@@ -465,9 +467,30 @@ test("Касание помечает фрагмент FragmentCollectMode = Tou
 	root.Position = fragment.Position
 	t.World:Advance(300 / 16)
 	t.Handlers.RequestCollect(player, id)
+	assert(fragment:GetAttribute("FragmentCollectMode") == "Touch", "сигнал — сразу при сборе")
+	assert(not fragment.Destroyed, "Part живёт ещё кадр — атрибут успевает дойти до клиента")
+	t.World:Advance(0.05)
 	assert(fragment.Destroyed)
-	assert(fragment:GetAttribute("FragmentCollectMode") == "Touch")
 	assert(fragment:GetAttribute("FragmentCollectedBy") == 8)
+end)
+
+test("Part живёт кадр после сбора, но из реестра убран сразу: второй сбор в этот кадр отклоняется", function()
+	local t = setup()
+	local owner, ownerData = t.AddPlayer(1, true)
+	local other, otherData = t.AddPlayer(2, false)
+	t.Collection.Init()
+	local fragment = firstFragment(t)
+	placeAbove(owner, fragment, 1)
+	placeAbove(other, fragment, 1)
+
+	t.World:Advance(t.AutoConfig.TickInterval + 0.001) -- магнит собрал, Part ещё не уничтожен
+	assert(rawTotal(ownerData) == t.CollectionConfig.FragmentValue, "магнит собрал")
+	assert(not fragment.Destroyed and fragment:GetAttribute("FragmentCollectMode") == "Magnet")
+	t.Handlers.RequestCollect(other, fragment:GetAttribute("FragmentId"))
+	assert(rawTotal(otherData) == 0, "видимый ещё кадр Part второй раз не засчитывается")
+	t.World:Advance(0.05)
+	assert(fragment.Destroyed, "через кадр Part уничтожен")
+	assert(fragment:GetAttribute("FragmentCollectMode") == "Magnet", "касание другого не перезаписало сигнал")
 end)
 
 ------------------------------------------------------------------------------------------
@@ -589,6 +612,7 @@ test("Телепорт к фрагменту: ручной RequestCollect отк
 	t.World:Advance(300 / 16)
 	t.Handlers.RequestCollect(player, id)
 	assert(rawTotal(data) == t.CollectionConfig.FragmentValue, `после подхода собрано {rawTotal(data)}`)
+	t.World:Advance(0.05)
 	assert(fragment.Destroyed)
 end)
 

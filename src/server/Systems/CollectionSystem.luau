@@ -24,10 +24,11 @@
 	  те же проверки (склад, кулдаун, MovementGuard-позиция), общий с ручным сбором кулдаун.
 	  Клиент в этом пути не участвует; каждый игрок обрабатывается в своём pcall — битый
 	  профиль одного не останавливает тик для остальных.
-	- Сигнал клиентам о способе сбора: прямо перед Destroy собранного фрагмента сервер ставит
-	  на его Part атрибуты FragmentCollectMode ("Touch"/"Magnet") и FragmentCollectedBy (UserId).
-	  Изменения одного инстанса реплицируются по порядку, поэтому клиент читает их в
-	  ChildRemoved: при "Magnet" кристалл летит к собравшему, при "Touch" — прежняя вспышка.
+	- Сигнал клиентам о способе сбора: при сборе сервер ставит на Part фрагмента атрибуты
+	  FragmentCollectMode ("Touch"/"Magnet") и FragmentCollectedBy (UserId), а сам Part
+	  уничтожает через кадр — атрибут, выставленный в одном кадре с Destroy, клиенту не
+	  реплицируется. При "Magnet" кристалл летит к собравшему (клиент реагирует на появление
+	  атрибута), при "Touch" — прежняя вспышка при исчезновении.
 	- Эмоциональный тип фрагмента (GDD раздел 3) выбирает сервер при спавне по весам
 	  FragmentEmotionConfig.SpawnWeights (серверный Random). При сборе фрагмент ложится в
 	  Factory.RawFragments[тип] — тип берётся из серверного реестра. Ёмкость склада
@@ -157,11 +158,19 @@ local function registerReject(player: Player, reason: string, now: number)
 	end
 end
 
+-- Из реестра — сразу (второй сбор того же фрагмента невозможен), Part — через кадр: атрибуты,
+-- выставленные в том же кадре, что и Destroy / Parent = nil, до клиента не доходят (проверено
+-- в Studio: task.defer тоже не помогает, task.wait() — да). Запрос RequestCollect к уже
+-- собранному, но ещё видимому Part получает обычный отказ no-such-fragment.
 local function removeFragment(fragment: Fragment)
 	fragments[fragment.Id] = nil
 	occupiedPoints[fragment.ZoneId][fragment.PointIndex] = nil
 	zoneCounts[fragment.ZoneId] -= 1
-	fragment.Part:Destroy()
+	local part = fragment.Part
+	task.spawn(function()
+		task.wait()
+		part:Destroy()
+	end)
 end
 
 -- Part — хитбокс касания и запасной визуал (шар цвета эмоции), если клиентский кристалл
@@ -290,7 +299,7 @@ local function collectFragment(
 
 	buffer[fragment.EmotionType] += math.min(CollectionConfig.FragmentValue, space)
 	state.LastCollectAt = now
-	-- Только визуал: до Destroy, чтобы клиент увидел атрибуты в ChildRemoved.
+	-- Только визуал: Part уничтожается через кадр (removeFragment), атрибуты успевают дойти.
 	fragment.Part:SetAttribute(Attributes.FragmentCollectMode, mode)
 	fragment.Part:SetAttribute(Attributes.FragmentCollectedBy, player.UserId)
 	removeFragment(fragment)

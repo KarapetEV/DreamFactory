@@ -21,7 +21,7 @@ local function test(name: string, run: () -> ())
 end
 
 -- Модули со строками интерфейса: имя → путь (пространство ключей Loc — имя модуля).
-local UI_MODULES = { "HUD", "ShopUI", "PetInventoryUI", "ChaosEventUI", "PlayerEffects" }
+local UI_MODULES = { "HUD", "ShopUI", "PetInventoryUI", "ChaosEventUI", "PlayerEffects", "BuffIcons" }
 local UI_PATHS: { [string]: string } = {
 	PlayerEffects = "src/client/Visuals/PlayerEffects.luau",
 }

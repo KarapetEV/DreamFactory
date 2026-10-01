@@ -64,6 +64,9 @@ Loc.Strings = {
 	["ShopUI.BuffActive"] = { ru = "активен ещё %d с", en = "active for %d s" },
 	["ShopUI.IncludedInPass"] = { ru = "Есть в геймпассе", en = "In your pass" },
 
+	-- BuffIcons
+	["BuffIcons.SecondsLeft"] = { ru = "%d с", en = "%ds" },
+
 	-- PetInventoryUI
 	["PetInventoryUI.Title"] = { ru = "Питомцы", en = "Pets" },
 	["PetInventoryUI.Close"] = { ru = "X", en = "X" },

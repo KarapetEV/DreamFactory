@@ -23,6 +23,7 @@ local Types = require(script.Parent.Parent.Types)
 local UpgradeEffects = require(script.Parent.Parent.UpgradeEffects)
 local PetSpeciesConfig = require(script.Parent.PetSpeciesConfig)
 local BiomeConfig = require(script.Parent.BiomeConfig)
+local BuffConfig = require(script.Parent.BuffConfig)
 
 type EmotionType = Types.EmotionType
 
@@ -87,6 +88,31 @@ export type VisualDefinition = {
 		MagnetEndScale: number, -- масштаб кристалла у персонажа (0..1]
 		MagnetArriveBurstCount: number, -- частиц вспышки у персонажа
 		MagnetMaxFlights: number, -- одновременных полётов; сверх — обычная вспышка на месте
+	},
+
+	-- Шлейф за персонажем под баффом Speed Boost (Visuals/SpeedTrail, атрибут SpeedBoostExpiresAt).
+	SpeedTrail: {
+		Color: Color3,
+		Lifetime: number, -- сек жизни сегмента шлейфа (длина хвоста на бегу)
+		HalfHeight: number, -- studs: вертикальный размах ленты от корня вверх/вниз
+		StartTransparency: number, -- у персонажа (0..1); к хвосту — полностью прозрачно
+		EndWidthScale: number, -- ширина ленты у хвоста относительно начала (0..1]
+		LightEmission: number, -- 0..1
+		CheckInterval: number, -- сек между проверками атрибута у игроков
+	},
+
+	-- Иконки действующих временных баффов у правого края экрана (UI/BuffIcons): цветная иконка
+	-- по мере истечения срока заливается серым сверху вниз.
+	BuffIcons: {
+		IconSize: number, -- px, сторона квадрата иконки
+		Spacing: number, -- px между иконками
+		GreyColor: Color3, -- серая (истёкшая) часть иконки
+		-- Серая плёнка поверх символа в серой части (0..1): эмодзи TextColor3 не красит.
+		GreyOverlayTransparency: number,
+		-- Ключ — BuffConfig.BuffIds (каждый бафф обязан иметь иконку). Image — картинка
+		-- ("rbxassetid://<id>", ассет типа Image из Creator Dashboard → Development Items);
+		-- Symbol — запасной эмодзи, пока картинки нет или она не загрузилась.
+		Icons: { [string]: { Color: Color3, Symbol: string, Image: string? } },
 	},
 
 	Pets: {
@@ -254,6 +280,35 @@ local VisualConfig: VisualDefinition = {
 		MagnetEndScale = 0.3,
 		MagnetArriveBurstCount = 6,
 		MagnetMaxFlights = 16,
+	},
+
+	SpeedTrail = {
+		Color = Color3.fromRGB(110, 220, 255),
+		Lifetime = 0.5,
+		HalfHeight = 1.3,
+		StartTransparency = 0.15,
+		EndWidthScale = 0.25,
+		LightEmission = 0.8,
+		CheckInterval = 0.2,
+	},
+
+	BuffIcons = {
+		IconSize = 52,
+		Spacing = 8,
+		GreyColor = Color3.fromRGB(95, 95, 105),
+		GreyOverlayTransparency = 0.3,
+		Icons = {
+			MagnetBoost = {
+				Color = Color3.fromRGB(225, 70, 95),
+				Symbol = "🧲",
+				Image = "rbxassetid://124937579746414",
+			},
+			SpeedBoost = {
+				Color = Color3.fromRGB(110, 200, 255),
+				Symbol = "⚡",
+				Image = "rbxassetid://129141467761200",
+			},
+		},
 	},
 
 	Pets = {
@@ -491,6 +546,29 @@ do
 	inRange("Fragment.MagnetEndScale", c.Fragment.MagnetEndScale, 0.05, 1)
 	positive("Fragment.MagnetArriveBurstCount", c.Fragment.MagnetArriveBurstCount)
 	positive("Fragment.MagnetMaxFlights", c.Fragment.MagnetMaxFlights)
+	positive("SpeedTrail.Lifetime", c.SpeedTrail.Lifetime)
+	positive("SpeedTrail.HalfHeight", c.SpeedTrail.HalfHeight)
+	inRange("SpeedTrail.StartTransparency", c.SpeedTrail.StartTransparency, 0, 1)
+	inRange("SpeedTrail.EndWidthScale", c.SpeedTrail.EndWidthScale, 0.01, 1)
+	inRange("SpeedTrail.LightEmission", c.SpeedTrail.LightEmission, 0, 1)
+	positive("SpeedTrail.CheckInterval", c.SpeedTrail.CheckInterval)
+	positive("BuffIcons.IconSize", c.BuffIcons.IconSize)
+	nonNegative("BuffIcons.Spacing", c.BuffIcons.Spacing)
+	isColor("BuffIcons.GreyColor", c.BuffIcons.GreyColor)
+	inRange("BuffIcons.GreyOverlayTransparency", c.BuffIcons.GreyOverlayTransparency, 0, 1)
+	for _, id in BuffConfig.BuffIds do
+		local icon = c.BuffIcons.Icons[id]
+		assert(icon ~= nil, `VisualConfig: нет BuffIcons.Icons.{id}`)
+		isColor(`BuffIcons.Icons.{id}.Color`, icon.Color)
+		assert(type(icon.Symbol) == "string" and icon.Symbol ~= "", `VisualConfig: пустой BuffIcons.Icons.{id}.Symbol`)
+		assert(
+			icon.Image == nil or (type(icon.Image) == "string" and string.match(icon.Image, "^rbxassetid://%d+$") ~= nil),
+			`VisualConfig: BuffIcons.Icons.{id}.Image должен быть rbxassetid://<число>, получено {icon.Image}`
+		)
+	end
+	for id in c.BuffIcons.Icons do
+		assert(BuffConfig.Buffs[id :: any] ~= nil, `VisualConfig: BuffIcons.Icons.{id} — нет такого баффа`)
+	end
 
 	positive("Pets.FollowBack", c.Pets.FollowBack)
 	positive("Pets.SideSpacing", c.Pets.SideSpacing)

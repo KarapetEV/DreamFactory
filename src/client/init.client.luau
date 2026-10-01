@@ -11,6 +11,7 @@ require(UI.ShopUI).Init(HUD)
 local PetInventoryUI = require(UI.PetInventoryUI)
 PetInventoryUI.Init(HUD)
 require(UI.ChaosEventUI).Init(HUD)
+require(UI.BuffIcons).Init()
 require(Controllers.CollectionController).Init()
 
 -- Визуал MVP: только отображение по снимкам/атрибутам сервера, без собственных ремоут.
@@ -28,3 +29,4 @@ initVisual("CocoonEffect", PetInventoryUI)
 initVisual("FactoryVisuals", HUD)
 initVisual("BossVisuals", HUD)
 initVisual("PlayerEffects", HUD)
+initVisual("SpeedTrail")

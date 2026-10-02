@@ -110,12 +110,12 @@ end)
 
 test("VisualConfig.BuffIcons: картинки — загруженные Image-ассеты; не rbxassetid://<число> — конфиг не грузится", function()
 	local config = load("src/shared/Config/VisualConfig")
-	assert(config.BuffIcons.Icons.MagnetBoost.Image == "rbxassetid://124937579746414")
-	assert(config.BuffIcons.Icons.SpeedBoost.Image == "rbxassetid://129141467761200")
+	assert(config.BuffIcons.Icons.MagnetBoost.Image == "rbxassetid://102586834440836")
+	assert(config.BuffIcons.Icons.SpeedBoost.Image == "rbxassetid://125239100169292")
 
 	local world = Harness.NewWorld()
 	world.SourcePatches["src/shared/Config/VisualConfig"] = function(source: string): string
-		local patched, count = string.gsub(source, "rbxassetid://129141467761200", "129141467761200")
+		local patched, count = string.gsub(source, "rbxassetid://125239100169292", "125239100169292")
 		assert(count == 1, "патч не применился — тест устарел")
 		return patched
 	end

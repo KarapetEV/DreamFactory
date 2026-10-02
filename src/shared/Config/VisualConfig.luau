@@ -110,7 +110,9 @@ export type VisualDefinition = {
 		-- Серая плёнка поверх символа в серой части (0..1): эмодзи TextColor3 не красит.
 		GreyOverlayTransparency: number,
 		-- Ключ — BuffConfig.BuffIds (каждый бафф обязан иметь иконку). Image — картинка
-		-- ("rbxassetid://<id>", ассет типа Image из Creator Dashboard → Development Items);
+		-- ("rbxassetid://<id>" ассета типа Image). Загрузка в Creator Dashboard типом Decals даёт id
+		-- ДЕКАЛИ — по нему картинка не грузится (AssetFetchStatus.Failure); нужен id картинки внутри
+		-- декали (Decal.Texture после InsertService:LoadAsset в Studio) или загрузка типом Images;
 		-- Symbol — запасной эмодзи, пока картинки нет или она не загрузилась.
 		Icons: { [string]: { Color: Color3, Symbol: string, Image: string? } },
 	},
@@ -301,12 +303,12 @@ local VisualConfig: VisualDefinition = {
 			MagnetBoost = {
 				Color = Color3.fromRGB(225, 70, 95),
 				Symbol = "🧲",
-				Image = "rbxassetid://124937579746414",
+				Image = "rbxassetid://102586834440836",
 			},
 			SpeedBoost = {
 				Color = Color3.fromRGB(110, 200, 255),
 				Symbol = "⚡",
-				Image = "rbxassetid://129141467761200",
+				Image = "rbxassetid://125239100169292",
 			},
 		},
 	},

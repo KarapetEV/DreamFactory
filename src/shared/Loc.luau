@@ -63,7 +63,7 @@ Loc.Strings = {
 	["ShopUI.ProductNotConfigured"] = { ru = "Продукт не настроен", en = "Product not set up" },
 	["ShopUI.Charges"] = { ru = "зарядов %d/%d", en = "charges %d/%d" },
 	["ShopUI.ChargesFull"] = {
-		ru = "Заряды: %d/%d — соберите немного перед покупкой",
+		ru = "Заряды: %d/%d — используйте немного перед покупкой",
 		en = "Charges: %d/%d — use some before buying",
 	},
 	["ShopUI.Full"] = { ru = "Полно", en = "Full" },

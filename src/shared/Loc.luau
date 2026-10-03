@@ -62,7 +62,11 @@ Loc.Strings = {
 	["ShopUI.SoonPrice"] = { ru = "Цена появится позже", en = "Price coming later" },
 	["ShopUI.ProductNotConfigured"] = { ru = "Продукт не настроен", en = "Product not set up" },
 	["ShopUI.Charges"] = { ru = "зарядов %d/%d", en = "charges %d/%d" },
-	["ShopUI.ChargesOverflow"] = { ru = "⚠ часть сгорит", en = "⚠ excess is lost" },
+	["ShopUI.ChargesFull"] = {
+		ru = "Заряды: %d/%d — соберите немного перед покупкой",
+		en = "Charges: %d/%d — use some before buying",
+	},
+	["ShopUI.Full"] = { ru = "Полно", en = "Full" },
 	["ShopUI.IncludedInPass"] = { ru = "Есть в геймпассе", en = "In your pass" },
 
 	-- BuffIcons

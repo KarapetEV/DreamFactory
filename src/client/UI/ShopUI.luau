@@ -15,8 +15,9 @@
 	  выдачу делает сервер по квитанции Roblox (ProcessReceipt), клиент ничего не докладывает.
 	  Покупать можно повторно. Строка баффа продаёт пак зарядов (активирует их игрок из HUD,
 	  BuffIcons); рядом с ценой — «зарядов N/Max» по атрибуту игрока (Attributes.<Id>Charges, пишет
-	  BuffSystem) и предупреждение, если пак не влезет под потолок целиком (кнопку это не
-	  блокирует). Magnet Boost владельцу Авто-сборщика не предлагается. Вкладка прокручивается.
+	  BuffSystem); если пак не влезет под потолок целиком — кнопка «Полно» неактивна и подсказка
+	  сначала потратить заряды. Magnet Boost владельцу Авто-сборщика не предлагается. Вкладка
+	  прокручивается.
 	- «Сезонный пропуск»: статичные позиции-заглушки с неактивными кнопками «Скоро».
 
 	Клиент ничего не решает о владении: «Куплено» = Id есть в последнем снимке сервера.
@@ -66,7 +67,8 @@ local TEXT = {
 	SoonPrice = Loc.Get("ShopUI.SoonPrice"),
 	ProductNotConfigured = Loc.Get("ShopUI.ProductNotConfigured"),
 	Charges = Loc.Get("ShopUI.Charges"),
-	ChargesOverflow = Loc.Get("ShopUI.ChargesOverflow"),
+	ChargesFull = Loc.Get("ShopUI.ChargesFull"),
+	Full = Loc.Get("ShopUI.Full"),
 	IncludedInPass = Loc.Get("ShopUI.IncludedInPass"),
 }
 
@@ -216,11 +218,10 @@ local function refreshProductRow(row: ProductRow)
 	local info = if attribute
 		then OneTimeOffers.ChargesInfo(product, Players.LocalPlayer:GetAttribute(attribute))
 		else nil
-	if info then
+	if info and info.Overflow then
+		text ..= " · " .. string.format(TEXT.ChargesFull, info.Charges, info.MaxCharges)
+	elseif info then
 		text ..= " · " .. string.format(TEXT.Charges, info.Charges, info.MaxCharges)
-		if info.Overflow then
-			text ..= " · " .. TEXT.ChargesOverflow
-		end
 	end
 	row.PriceLabel.Text = text
 
@@ -228,12 +229,15 @@ local function refreshProductRow(row: ProductRow)
 		product,
 		row.Price.Status,
 		ownedPassesFromSnapshot(),
-		os.clock() < row.PromptLockedUntil
+		os.clock() < row.PromptLockedUntil,
+		if attribute then Players.LocalPlayer:GetAttribute(attribute) else nil
 	)
 	if state == "Buy" then
 		setButton(row.Button, TEXT.Buy, true)
 	elseif state == "Included" then
 		setButton(row.Button, TEXT.IncludedInPass, false)
+	elseif state == "Full" then
+		setButton(row.Button, TEXT.Full, false)
 	elseif state == "Waiting" then
 		setButton(row.Button, TEXT.Waiting, false)
 	else
@@ -304,7 +308,8 @@ end
 
 local function onProductBuyClicked(row: ProductRow)
 	local locked = os.clock() < row.PromptLockedUntil
-	if OneTimeOffers.ButtonState(row.Product, row.Price.Status, ownedPassesFromSnapshot(), locked) ~= "Buy" then
+	local charges = if row.ChargesAttribute then Players.LocalPlayer:GetAttribute(row.ChargesAttribute) else nil
+	if OneTimeOffers.ButtonState(row.Product, row.Price.Status, ownedPassesFromSnapshot(), locked, charges) ~= "Buy" then
 		return
 	end
 

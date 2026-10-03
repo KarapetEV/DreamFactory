@@ -101,21 +101,45 @@ test("Кнопка: Magnet Boost владельцу Авто-сборщика �
 	assert(t.Offers.ButtonState(speed, "Ready", { t.AutoCollector }, false) == "Buy", "Speed Boost геймпасс не заменяет")
 end)
 
-test("Заряды в строке пака: сколько есть из потолка; предупреждение, только если пак не влезет целиком", function()
+test("Заряды в строке пака: сколько есть из потолка; Overflow — только если пак не влезет целиком", function()
 	local t = setup()
 	local magnet = t.ById.MagnetBoost
 	local info = t.Offers.ChargesInfo(magnet, 3)
 	assert(info.Charges == 3 and info.MaxCharges == 20 and not info.Overflow, "3 + 5 ≤ 20")
 	assert(not t.Offers.ChargesInfo(magnet, 15).Overflow, "15 + 5 = 20 — влезает ровно")
-	assert(t.Offers.ChargesInfo(magnet, 16).Overflow, "16 + 5 > 20 — часть сгорит")
-	assert(t.Offers.ChargesInfo(magnet, 20).Overflow, "на потолке — сгорит весь пак")
-	assert(t.Offers.ButtonState(t.Configured("MagnetBoost"), "Ready", {}, false) == "Buy", "предупреждение кнопку не блокирует")
+	assert(t.Offers.ChargesInfo(magnet, 16).Overflow, "16 + 5 > 20 — не влезает")
+	assert(t.Offers.ChargesInfo(magnet, 20).Overflow, "на потолке — не влезает")
 
 	for _, junk in { nil, "7", 0 / 0, -2, math.huge } do
 		local j = t.Offers.ChargesInfo(magnet, junk)
 		assert(j.Charges == 0 and not j.Overflow, tostring(junk))
 	end
 	assert(t.Offers.ChargesInfo(t.ById.EssencePackS, 3) == nil, "пак Эссенции — без зарядов")
+end)
+
+test("Кнопка: пак не влезет под потолок — «Полно» (неактивна) при любой цене; влезет — как обычно", function()
+	local t = setup()
+	for _, id in { "MagnetBoost", "SpeedBoost" } do
+		local buff = t.Configured(id)
+		for _, charges in { 16, 20 } do
+			for _, status in { "Ready", "Loading", "Failed" } do
+				assert(t.Offers.ButtonState(buff, status, {}, false, charges) == "Full", `{id} {charges} {status}`)
+			end
+			assert(t.Offers.ButtonState(buff, "Ready", {}, true, charges) == "Full", "и во время дебаунса")
+		end
+		assert(t.Offers.ButtonState(buff, "Ready", {}, false, 15) == "Buy", `{id}: 15 + 5 = 20 — можно`)
+		assert(t.Offers.ButtonState(buff, "Ready", {}, false, nil) == "Buy", `{id}: атрибута ещё нет — 0 зарядов`)
+		assert(t.Offers.ButtonState(buff, "Ready", {}, false, "мусор") == "Buy", `{id}: мусор — 0 зарядов`)
+	end
+	assert(t.Offers.ButtonState(t.Configured("EssencePackS"), "Ready", {}, false, 20) == "Buy", "паку Эссенции заряды не важны")
+end)
+
+test("Кнопка: заглушка и Авто-сборщик важнее «Полно» (порядок условий)", function()
+	local t = setup()
+	assert(t.Offers.ButtonState(t.Stub("SpeedBoost"), "Ready", {}, false, 20) == "Unavailable", "заглушка")
+	local magnet = t.Configured("MagnetBoost")
+	assert(t.Offers.ButtonState(magnet, "Ready", { t.AutoCollector }, false, 20) == "Included", "владельцу геймпасса")
+	assert(t.Offers.ButtonState(magnet, "Ready", nil, false, 20) == "Waiting", "владение ещё неизвестно")
 end)
 
 return tests

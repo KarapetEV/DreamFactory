@@ -11,14 +11,16 @@
 	    ProductId = 0 (заглушка)                 → Unavailable;
 	    Magnet Boost, снимка владения ещё нет     → Waiting;
 	    Magnet Boost у владельца Авто-сборщика    → Included (бафф ничего не добавил бы);
+	    пак зарядов не влезет под потолок        → Full (часть зарядов сгорела бы);
 	    цена не получена / не продаётся          → Unavailable (без явной цены не предлагаем);
 	    окно покупки только что открыто          → Waiting;
 	    иначе                                    → Buy.
-	  Действующий бафф покупку не блокирует: повторная покупка продлевает его (стекинг).
+	  Действующий бафф покупку не блокирует: заряды копятся, тратятся по одному.
 	- Строка баффа продаёт пак зарядов (BuffConfig PackSize). Рядом с ценой — сколько зарядов уже
-	  есть (атрибут игрока Attributes.<Id>Charges, пишет BuffSystem) из потолка MaxCharges; если
-	  пак не влезет целиком (Charges + PackSize > MaxCharges) — предупреждение, что избыток
-	  сгорит. Покупку это не блокирует (решение игрока); сервер зажмёт заряды потолком сам.
+	  есть (атрибут игрока Attributes.<Id>Charges, пишет BuffSystem) из потолка MaxCharges. Если
+	  пак не влезет целиком (Charges + PackSize > MaxCharges) — кнопка неактивна (Full) с
+	  подсказкой сначала потратить заряды. Только UX: покупку через обход UI сервер всё равно
+	  выдаст, зажав заряды потолком (BuffSystem.Grant).
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -31,12 +33,12 @@ local BuffConfig = require(ReplicatedStorage.shared.Config.BuffConfig)
 type DevProductDefinition = DevProductConfig.DevProductDefinition
 
 export type PriceStatus = "Idle" | "Loading" | "Ready" | "NotForSale" | "Failed"
-export type ButtonState = "Buy" | "Waiting" | "Unavailable" | "Included"
+export type ButtonState = "Buy" | "Waiting" | "Unavailable" | "Included" | "Full"
 
 export type ChargesInfo = {
 	Charges: number, -- зарядов сейчас (мусор в атрибуте — 0)
 	MaxCharges: number,
-	Overflow: boolean, -- пак не влезет целиком: часть зарядов сгорит
+	Overflow: boolean, -- пак не влезет целиком под потолок: покупка недоступна (Full)
 }
 
 -- Атрибут игрока с зарядами баффа по BuffId.
@@ -84,12 +86,14 @@ function OneTimeOffers.ChargesInfo(product: DevProductDefinition, chargesValue: 
 	}
 end
 
--- ownedPasses — GamePassesOwned из последнего снимка сервера (nil — снимка ещё нет).
+-- ownedPasses — GamePassesOwned из последнего снимка сервера (nil — снимка ещё нет);
+-- chargesValue — атрибут зарядов баффа (Attributes.<Id>Charges; для паков Эссенции не нужен).
 function OneTimeOffers.ButtonState(
 	product: DevProductDefinition,
 	priceStatus: PriceStatus,
 	ownedPasses: { string }?,
-	promptLocked: boolean
+	promptLocked: boolean,
+	chargesValue: unknown?
 ): ButtonState
 	if product.ProductId == 0 then
 		return "Unavailable"
@@ -101,6 +105,10 @@ function OneTimeOffers.ButtonState(
 		if table.find(ownedPasses, AutoCollectorConfig.GamePassId) ~= nil then
 			return "Included"
 		end
+	end
+	local charges = OneTimeOffers.ChargesInfo(product, chargesValue)
+	if charges and charges.Overflow then
+		return "Full"
 	end
 	if priceStatus ~= "Ready" then
 		return "Unavailable"

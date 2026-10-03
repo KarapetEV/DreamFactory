@@ -11,8 +11,8 @@
 
 	В S12 — паки Эссенции; в S18 — премиум-ветка сезонного пропуска (Reward.Kind
 	"BattlePassPremium": выдачу делает BattlePassSystem.ApplyPremium через тот же
-	идемпотентный ProcessReceipt); временные баффы Magnet Boost / Speed Boost (Reward.Kind "Buff":
-	BuffSystem.Grant продлевает Buffs.<Id>ExpiresAt, параметры баффа — BuffConfig). «Быстрое
+	идемпотентный ProcessReceipt); паки зарядов баффов Magnet Boost / Speed Boost (Reward.Kind
+	"Buff": BuffSystem.Grant начисляет BuffConfig PackSize зарядов, активирует игрок из HUD). «Быстрое
 	пробуждение», реролл мутаций, косметика и
 	кокон-паки — отдельные сессии (новый Reward.Kind + ветка выдачи в MonetizationSystem).
 
@@ -31,7 +31,8 @@ export type DevProductReward = {
 	-- Для "Essence" — сколько начислить в Currency.Essence. Для "BattlePassPremium" — nil:
 	-- награды премиум-ветки берутся из BattlePassConfig.PremiumRewards.
 	Amount: number?,
-	-- Для "Buff" — какой бафф выдать (длительность и эффект — BuffConfig). Иначе nil.
+	-- Для "Buff" — заряды какого баффа начислить (размер пака, длительность, эффект — BuffConfig).
+	-- Иначе nil.
 	BuffId: BuffConfig.BuffId?,
 }
 
@@ -86,13 +87,13 @@ local DevProductConfig: DevProductConfigDefinition = {
 		},
 		{
 			Id = "MagnetBoost",
-			DisplayName = "Магнит-буст (20 с)",
+			DisplayName = "Магнит-буст ×5",
 			ProductId = 3715692184,
 			Reward = { Kind = "Buff", BuffId = "MagnetBoost" },
 		},
 		{
 			Id = "SpeedBoost",
-			DisplayName = "Спид-буст (20 с)",
+			DisplayName = "Спид-буст ×5",
 			ProductId = 3715692301,
 			Reward = { Kind = "Buff", BuffId = "SpeedBoost" },
 		},

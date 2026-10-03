@@ -15,8 +15,10 @@
 	    окно покупки только что открыто          → Waiting;
 	    иначе                                    → Buy.
 	  Действующий бафф покупку не блокирует: повторная покупка продлевает его (стекинг).
-	- Остаток баффа — из атрибута игрока (Attributes.<Id>ExpiresAt, пишет BuffSystem) против
-	  серверного времени; целые секунды вверх, nil — бафф не действует или атрибут битый.
+	- Строка баффа продаёт пак зарядов (BuffConfig PackSize). Рядом с ценой — сколько зарядов уже
+	  есть (атрибут игрока Attributes.<Id>Charges, пишет BuffSystem) из потолка MaxCharges; если
+	  пак не влезет целиком (Charges + PackSize > MaxCharges) — предупреждение, что избыток
+	  сгорит. Покупку это не блокирует (решение игрока); сервер зажмёт заряды потолком сам.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -24,16 +26,23 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Attributes = require(ReplicatedStorage.shared.Attributes)
 local DevProductConfig = require(ReplicatedStorage.shared.Config.DevProductConfig)
 local AutoCollectorConfig = require(ReplicatedStorage.shared.Config.AutoCollectorConfig)
+local BuffConfig = require(ReplicatedStorage.shared.Config.BuffConfig)
 
 type DevProductDefinition = DevProductConfig.DevProductDefinition
 
 export type PriceStatus = "Idle" | "Loading" | "Ready" | "NotForSale" | "Failed"
 export type ButtonState = "Buy" | "Waiting" | "Unavailable" | "Included"
 
--- Атрибут игрока со сроком баффа по BuffId.
-local BUFF_ATTRIBUTES: { [string]: string } = {
-	MagnetBoost = Attributes.MagnetBoostExpiresAt,
-	SpeedBoost = Attributes.SpeedBoostExpiresAt,
+export type ChargesInfo = {
+	Charges: number, -- зарядов сейчас (мусор в атрибуте — 0)
+	MaxCharges: number,
+	Overflow: boolean, -- пак не влезет целиком: часть зарядов сгорит
+}
+
+-- Атрибут игрока с зарядами баффа по BuffId.
+local CHARGES_ATTRIBUTES: { [string]: string } = {
+	MagnetBoost = Attributes.MagnetBoostCharges,
+	SpeedBoost = Attributes.SpeedBoostCharges,
 }
 
 local OneTimeOffers = {}
@@ -49,24 +58,30 @@ function OneTimeOffers.List(): { DevProductDefinition }
 	return list
 end
 
--- Имя атрибута игрока со сроком баффа; nil — продукт не бафф.
-function OneTimeOffers.BuffAttribute(product: DevProductDefinition): string?
+-- Имя атрибута игрока с зарядами баффа; nil — продукт не бафф.
+function OneTimeOffers.ChargesAttribute(product: DevProductDefinition): string?
 	if product.Reward.Kind ~= "Buff" then
 		return nil
 	end
-	return BUFF_ATTRIBUTES[product.Reward.BuffId :: string]
+	return CHARGES_ATTRIBUTES[product.Reward.BuffId :: string]
 end
 
--- Сколько целых секунд (вверх) ещё действует бафф; nil — не действует или значение битое.
-function OneTimeOffers.BuffSecondsLeft(expiresAt: unknown, serverNow: number): number?
-	if type(expiresAt) ~= "number" or expiresAt ~= expiresAt or expiresAt == math.huge then
+-- Заряды для строки пака: сколько есть, потолок и сгорит ли часть пака. nil — продукт не бафф.
+function OneTimeOffers.ChargesInfo(product: DevProductDefinition, chargesValue: unknown): ChargesInfo?
+	if product.Reward.Kind ~= "Buff" then
 		return nil
 	end
-	local left = expiresAt - serverNow
-	if not (left > 0) then
-		return nil
-	end
-	return math.ceil(left)
+	local buff = BuffConfig.Buffs[product.Reward.BuffId :: any]
+	local valid = type(chargesValue) == "number"
+		and chargesValue == chargesValue
+		and chargesValue >= 0
+		and chargesValue < math.huge
+	local charges = if valid then math.floor(chargesValue :: number) else 0
+	return {
+		Charges = charges,
+		MaxCharges = buff.MaxCharges,
+		Overflow = charges + buff.PackSize > buff.MaxCharges,
+	}
 end
 
 -- ownedPasses — GamePassesOwned из последнего снимка сервера (nil — снимка ещё нет).

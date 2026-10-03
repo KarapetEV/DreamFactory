@@ -48,4 +48,29 @@ function BuffTimer.Update(timer: Timer, expiresAt: unknown, serverNow: number, b
 	return { Visible = true, SecondsLeft = math.ceil(left), Grey = grey }
 end
 
+export type ButtonState = "Hidden" | "Ready" | "Pending" | "Active"
+
+-- Заряды из атрибута игрока: целое ≥ 0; мусор/nil — 0.
+function BuffTimer.Charges(value: unknown): number
+	if type(value) == "number" and value == value and value >= 0 and value < math.huge and value % 1 == 0 then
+		return value
+	end
+	return 0
+end
+
+-- Состояние иконки-кнопки активации (BuffIcons). Только UX: заряд и запуск решает сервер.
+--   Active  — бафф действует: таймер, клик игнорируется (заряд не тратится);
+--   Hidden  — не действует и зарядов нет: иконки нет;
+--   Pending — клик уже отправлен, ждём ответа сервера (атрибут срока): повторно не шлём;
+--   Ready   — есть заряд: клик тратит его и запускает бафф.
+function BuffTimer.ButtonState(charges: number, active: boolean, pending: boolean): ButtonState
+	if active then
+		return "Active"
+	end
+	if charges <= 0 then
+		return "Hidden"
+	end
+	return if pending then "Pending" else "Ready"
+end
+
 return BuffTimer

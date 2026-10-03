@@ -63,6 +63,8 @@ export type RemoteRegistry = {
 	ChaosSnapshot: RemoteEvent,
 	-- PvPRaidSystem (раздел 5.6)
 	RequestRaidStart: RemoteEvent,
+	-- BuffSystem: клиент → сервер, BuffId — потратить заряд и включить бафф (иконка в HUD).
+	ActivateBuff: RemoteEvent,
 }
 
 local Remotes: RemoteRegistry = {
@@ -77,6 +79,7 @@ local Remotes: RemoteRegistry = {
 	RequestAttackBoss = getRemoteEvent(folder, "RequestAttackBoss"),
 	ChaosSnapshot = getRemoteEvent(folder, "ChaosSnapshot"),
 	RequestRaidStart = getRemoteEvent(folder, "RequestRaidStart"),
+	ActivateBuff = getRemoteEvent(folder, "ActivateBuff"),
 }
 
 return Remotes

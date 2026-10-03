@@ -4,13 +4,16 @@
 	Временные платные баффы — дев-продукты MagnetBoost/SpeedBoost (DevProductConfig,
 	Reward.Kind "Buff"). Не секрет — лежит в shared. Логика — BuffSystem.
 
-	Выдаёт только сервер: BuffSystem.Grant из MonetizationSystem.ProcessReceipt (идемпотентность
-	покупки — там же, маркером квитанции). Профиль хранит os.time() конца баффа
-	(Buffs.MagnetBoostExpiresAt / Buffs.SpeedBoostExpiresAt) — по образцу PvP.ShieldExpiresAt:
-	время идёт и офлайн, смена сервера бафф не сбрасывает.
-
-	Стекинг: покупка при активном баффе продлевает его — ExpiresAt = max(ExpiresAt, now) + Duration;
-	истёкший бафф начинается заново от now.
+	Модель зарядов: покупка не включает бафф, а даёт пак из PackSize зарядов; игрок сам тратит
+	заряд кликом по иконке баффа в HUD (Remotes.ActivateBuff), и бафф действует Duration секунд.
+	- Начисляет только сервер: BuffSystem.Grant из MonetizationSystem.ProcessReceipt
+	  (идемпотентность покупки — там же, маркером квитанции). Заряды зажимаются в [0, MaxCharges]:
+	  избыток сверх потолка сгорает, квитанция всё равно считается обработанной (магазин
+	  предупреждает об этом до покупки).
+	- Активация — BuffSystem.Activate: только если заряд есть и бафф сейчас не действует
+	  (во время действия повторный клик ничего не тратит). Профиль хранит число зарядов
+	  (Buffs.<Id>Charges) и os.time() конца действия (Buffs.<Id>ExpiresAt) — по образцу
+	  PvP.ShieldExpiresAt: время идёт и офлайн, смена сервера бафф не сбрасывает.
 
 	- MagnetBoost — магнит сбора на Duration секунд: тот же, что у геймпасса Авто-сборщика
 	  (AutoCollectorConfig.Radius × Nostalgic-петы, тик AutoCollectorConfig.TickInterval).
@@ -29,7 +32,9 @@ local UpgradeEffects = require(script.Parent.Parent.UpgradeEffects)
 export type BuffId = "MagnetBoost" | "SpeedBoost"
 
 export type BuffDefinition = {
-	Duration: number, -- секунд за одну покупку
+	Duration: number, -- секунд действия одной активации (одного заряда)
+	PackSize: number, -- зарядов за одну покупку дев-продукта
+	MaxCharges: number, -- потолок хранимых зарядов; избыток при начислении сгорает
 	WalkSpeed: number?, -- только SpeedBoost: скорость персонажа под баффом
 }
 
@@ -38,25 +43,35 @@ export type BuffConfigDefinition = {
 	BaseWalkSpeed: number,
 	-- Как часто сервер применяет/снимает эффекты баффов (WalkSpeed, потолок MovementGuard), сек.
 	TickInterval: number,
+	-- Rate limit Remotes.ActivateBuff: не больше MaxActivateRequestsPerWindow вызовов за
+	-- ActivateRequestWindow секунд (тот же RateLimiter, что у RequestCollect).
+	ActivateRequestWindow: number,
+	MaxActivateRequestsPerWindow: number,
 	Buffs: { [BuffId]: BuffDefinition },
-	-- Порядок обхода (детерминированный, для проверок и тестов).
+	-- Порядок обхода (детерминированный, для проверок, тестов и порядка иконок в HUD).
 	BuffIds: { BuffId },
 }
 
 local BuffConfig: BuffConfigDefinition = {
 	BaseWalkSpeed = 16,
 	TickInterval = 0.25,
+	ActivateRequestWindow = 1,
+	MaxActivateRequestsPerWindow = 4,
 	Buffs = {
-		MagnetBoost = { Duration = 20 },
-		SpeedBoost = { Duration = 20, WalkSpeed = 32 },
+		MagnetBoost = { Duration = 60, PackSize = 5, MaxCharges = 20 },
+		SpeedBoost = { Duration = 60, PackSize = 5, MaxCharges = 20, WalkSpeed = 32 },
 	},
 	BuffIds = { "MagnetBoost", "SpeedBoost" },
 }
 
 -- Проверки при загрузке: NaN/0 в длительности — бафф за Robux, который ничего не даёт или
--- не кончается; WalkSpeed ниже базовой — «бафф», замедляющий игрока.
+-- не кончается; пак больше потолка — покупка, часть которой сгорает всегда; WalkSpeed ниже
+-- базовой — «бафф», замедляющий игрока.
 do
 	local isFinite = UpgradeEffects.IsFinite
+	local function isCount(value: unknown): boolean
+		return isFinite(value) and (value :: number) >= 1 and (value :: number) % 1 == 0
+	end
 	assert(
 		isFinite(BuffConfig.BaseWalkSpeed) and BuffConfig.BaseWalkSpeed > 0,
 		"BuffConfig: некорректный BaseWalkSpeed"
@@ -65,6 +80,11 @@ do
 		isFinite(BuffConfig.TickInterval) and BuffConfig.TickInterval >= 0.1,
 		"BuffConfig: некорректный TickInterval"
 	)
+	assert(
+		isFinite(BuffConfig.ActivateRequestWindow) and BuffConfig.ActivateRequestWindow > 0,
+		"BuffConfig: некорректный ActivateRequestWindow"
+	)
+	assert(isCount(BuffConfig.MaxActivateRequestsPerWindow), "BuffConfig: некорректный MaxActivateRequestsPerWindow")
 	local listed: { [string]: true } = {}
 	for _, id in BuffConfig.BuffIds do
 		assert(BuffConfig.Buffs[id], `BuffConfig: бафф {id} из BuffIds не описан`)
@@ -73,6 +93,9 @@ do
 	for id, buff in BuffConfig.Buffs :: { [string]: BuffDefinition } do
 		assert(listed[id], `BuffConfig: бафф {id} отсутствует в BuffIds`)
 		assert(isFinite(buff.Duration) and buff.Duration >= 1, `BuffConfig: у {id} некорректный Duration`)
+		assert(isCount(buff.PackSize), `BuffConfig: у {id} некорректный PackSize`)
+		assert(isCount(buff.MaxCharges), `BuffConfig: у {id} некорректный MaxCharges`)
+		assert(buff.PackSize <= buff.MaxCharges, `BuffConfig: у {id} PackSize больше MaxCharges`)
 	end
 	local speed = BuffConfig.Buffs.SpeedBoost.WalkSpeed
 	assert(

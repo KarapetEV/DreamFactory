@@ -1,19 +1,24 @@
 --!strict
 
 --[[
-	BuffIcons — колонка иконок действующих временных баффов (Magnet Boost, Speed Boost) у правого
-	края экрана, посередине по высоте (правый верх занят списком игроков CoreGui, правый низ —
-	панелью апгрейдов; иконки только отображают, кликов нет).
+	BuffIcons — колонка иконок временных баффов (Magnet Boost, Speed Boost) у правого края
+	экрана, посередине по высоте (правый верх занят списком игроков CoreGui — там клики
+	перехватываются, правый низ — панелью апгрейдов). Иконка — кнопка активации заряда.
 
-	- Источник — атрибуты своего игрока Attributes.<Id>ExpiresAt (os.time() конца баффа, пишет
-	  BuffSystem), «сейчас» — Workspace:GetServerTimeNow(). Модель — чистый BuffTimer.
-	- Иконка цветная; по мере истечения серый слой заливает её сверху вниз (доля = прошедшее
-	  время / полная шкала). Под иконкой — остаток в секундах. Истёк — иконка скрыта.
+	- Источник — атрибуты своего игрока Attributes.<Id>Charges (заряды) и Attributes.<Id>ExpiresAt
+	  (os.time() конца действия), пишет BuffSystem; «сейчас» — Workspace:GetServerTimeNow().
+	  Модель — чистый BuffTimer (ButtonState, Update).
+	- Есть заряды и бафф не действует — цветная иконка с бейджем числа зарядов и подписью
+	  «Готов»; клик шлёт Remotes.ActivateBuff(id) (только intent: тратит заряд и запускает бафф
+	  сервер) и до ответа (смена атрибута срока) или таймаута иконка повторно не шлёт.
+	- Бафф действует — серый слой заливает иконку сверху вниз (доля = прошедшее время / полная
+	  шкала), под иконкой — остаток в секундах; клик игнорируется. Кончился — снова «Готов»
+	  (заряд уже списан), а без зарядов иконка скрыта.
 	- Символ — картинка VisualConfig.BuffIcons.Icons[id].Image (загружена в Creator Dashboard как
 	  Image); не задана или не загрузилась (модерация, сбой) — запасной эмодзи Symbol. Серая часть —
 	  серая подложка с тем же символом (картинка — с серым оттенком ImageColor3) под полупрозрачной
 	  серой плёнкой: эмодзи цвет не меняет, а оттенок картинки лишь умножает её цвета.
-	- Только отображение: баффы выдаёт и проверяет сервер.
+	- Только отображение и intent: заряды и сроки считает и проверяет сервер.
 ]]
 
 local ContentProvider = game:GetService("ContentProvider")
@@ -23,6 +28,7 @@ local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
 local Loc = require(ReplicatedStorage.shared.Loc)
+local Remotes = require(ReplicatedStorage.shared.Remotes)
 local Attributes = require(ReplicatedStorage.shared.Attributes)
 local BuffConfig = require(ReplicatedStorage.shared.Config.BuffConfig)
 local VisualConfig = require(ReplicatedStorage.shared.Config.VisualConfig)
@@ -30,6 +36,8 @@ local BuffTimer = require(script.Parent.BuffTimer)
 
 local TEXT = {
 	SecondsLeft = Loc.Get("BuffIcons.SecondsLeft"),
+	Ready = Loc.Get("BuffIcons.Ready"),
+	Pending = Loc.Get("BuffIcons.Pending"),
 }
 
 local LABEL_HEIGHT = 18
@@ -37,23 +45,35 @@ local ICON_CORNER = UDim.new(0, 10)
 local IMAGE_SCALE = 0.8 -- доля квадрата иконки под картинку
 local TINT_COLORED = Color3.new(1, 1, 1)
 local TINT_GREY = Color3.fromRGB(170, 170, 175)
+local BADGE_SIZE = 22
+local BADGE_COLOR = Color3.fromRGB(30, 25, 50)
+-- Сколько ждать ответа сервера на клик (смены атрибута срока), прежде чем снова разрешить клик.
+local PENDING_TIMEOUT = 2
 
 type Look = { Color: Color3, Symbol: string, Image: string? }
 
--- Атрибут игрока со сроком баффа по BuffId.
-local ATTRIBUTES: { [string]: string } = {
+-- Атрибуты игрока со сроком действия и зарядами по BuffId.
+local EXPIRES_ATTRIBUTES: { [string]: string } = {
 	MagnetBoost = Attributes.MagnetBoostExpiresAt,
 	SpeedBoost = Attributes.SpeedBoostExpiresAt,
+}
+local CHARGES_ATTRIBUTES: { [string]: string } = {
+	MagnetBoost = Attributes.MagnetBoostCharges,
+	SpeedBoost = Attributes.SpeedBoostCharges,
 }
 
 type Icon = {
 	Id: string,
-	Attribute: string,
+	ExpiresAttribute: string,
+	ChargesAttribute: string,
 	Duration: number,
 	Root: Frame,
 	GreyClip: Frame,
 	Label: TextLabel,
+	Button: TextButton,
+	Badge: TextLabel,
 	Timer: BuffTimer.Timer,
+	PendingUntil: number, -- os.clock(): до этого момента клик уже отправлен и ждёт ответа
 }
 
 local BuffIcons = {}
@@ -143,6 +163,28 @@ local function makeFace(
 	return face
 end
 
+-- Текущее состояние иконки по атрибутам (общая логика для отрисовки и клика).
+local function readState(icon: Icon): (BuffTimer.ButtonState, BuffTimer.State, number)
+	local player = Players.LocalPlayer
+	local timer = BuffTimer.Update(
+		icon.Timer,
+		player:GetAttribute(icon.ExpiresAttribute),
+		Workspace:GetServerTimeNow(),
+		icon.Duration
+	)
+	local charges = BuffTimer.Charges(player:GetAttribute(icon.ChargesAttribute))
+	local state = BuffTimer.ButtonState(charges, timer.Visible, os.clock() < icon.PendingUntil)
+	return state, timer, charges
+end
+
+local function onClick(icon: Icon)
+	if readState(icon) ~= "Ready" then
+		return -- действует, ждёт ответа или зарядов нет: заряд не тратим
+	end
+	icon.PendingUntil = os.clock() + PENDING_TIMEOUT
+	Remotes.ActivateBuff:FireServer(icon.Id)
+end
+
 local function buildIcon(parent: Instance, id: string, order: number): Icon
 	local cfg = VisualConfig.BuffIcons
 	local look = cfg.Icons[id]
@@ -182,28 +224,68 @@ local function buildIcon(parent: Instance, id: string, order: number): Icon
 	label.TextScaled = true
 	label.Parent = root
 
-	return {
+	-- Кнопка — прозрачная поверх квадрата иконки.
+	local button = Instance.new("TextButton")
+	button.Size = UDim2.fromOffset(size, size)
+	button.BackgroundTransparency = 1
+	button.Text = ""
+	button.AutoButtonColor = false
+	button.ZIndex = 3
+	button.Parent = root
+
+	-- Бейдж зарядов в правом верхнем углу.
+	local badge = Instance.new("TextLabel")
+	badge.Size = UDim2.fromOffset(BADGE_SIZE, BADGE_SIZE)
+	badge.Position = UDim2.fromOffset(size - BADGE_SIZE + 6, -6)
+	badge.BackgroundColor3 = BADGE_COLOR
+	badge.TextColor3 = Color3.new(1, 1, 1)
+	badge.TextScaled = true
+	badge.ZIndex = 4
+	badge.Parent = root
+	local badgeCorner = Instance.new("UICorner")
+	badgeCorner.CornerRadius = UDim.new(1, 0)
+	badgeCorner.Parent = badge
+	local badgeStroke = Instance.new("UIStroke")
+	badgeStroke.Color = Color3.new(1, 1, 1)
+	badgeStroke.Thickness = 1.5
+	badgeStroke.Parent = badge
+
+	local icon: Icon = {
 		Id = id,
-		Attribute = ATTRIBUTES[id],
+		ExpiresAttribute = EXPIRES_ATTRIBUTES[id],
+		ChargesAttribute = CHARGES_ATTRIBUTES[id],
 		Duration = BuffConfig.Buffs[id :: any].Duration,
 		Root = root,
 		GreyClip = clip,
 		Label = label,
+		Button = button,
+		Badge = badge,
 		Timer = BuffTimer.new(),
+		PendingUntil = 0,
 	}
+	button.Activated:Connect(function()
+		onClick(icon)
+	end)
+	return icon
 end
 
 local function update()
-	local player = Players.LocalPlayer
-	local now = Workspace:GetServerTimeNow()
 	local size = VisualConfig.BuffIcons.IconSize
 	for _, icon in icons do
-		local state = BuffTimer.Update(icon.Timer, player:GetAttribute(icon.Attribute), now, icon.Duration)
-		icon.Root.Visible = state.Visible
-		if state.Visible then
-			icon.GreyClip.Size = UDim2.fromOffset(size, math.floor(size * state.Grey + 0.5))
-			icon.Label.Text = string.format(TEXT.SecondsLeft, state.SecondsLeft)
+		local state, timer, charges = readState(icon)
+		icon.Root.Visible = state ~= "Hidden"
+		if state == "Hidden" then
+			continue
 		end
+		local grey = if state == "Active" then timer.Grey else 0
+		icon.GreyClip.Size = UDim2.fromOffset(size, math.floor(size * grey + 0.5))
+		icon.Label.Text = if state == "Active"
+			then string.format(TEXT.SecondsLeft, timer.SecondsLeft)
+			elseif state == "Pending" then TEXT.Pending
+			else TEXT.Ready
+		icon.Badge.Text = tostring(charges)
+		icon.Badge.Visible = charges > 0
+		icon.Button.Active = state == "Ready"
 	end
 end
 

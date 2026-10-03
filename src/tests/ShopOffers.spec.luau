@@ -57,11 +57,20 @@ test("Состав вкладки: паки Эссенции и баффы в п
 	)
 end)
 
-test("Атрибут срока — только у баффов и совпадает с тем, что пишет BuffSystem", function()
+test("Атрибут зарядов — только у баффов и совпадает с тем, что пишет BuffSystem", function()
 	local t = setup()
-	assert(t.Offers.BuffAttribute(t.ById.MagnetBoost) == "MagnetBoostExpiresAt")
-	assert(t.Offers.BuffAttribute(t.ById.SpeedBoost) == "SpeedBoostExpiresAt")
-	assert(t.Offers.BuffAttribute(t.ById.EssencePackS) == nil)
+	assert(t.Offers.ChargesAttribute(t.ById.MagnetBoost) == "MagnetBoostCharges")
+	assert(t.Offers.ChargesAttribute(t.ById.SpeedBoost) == "SpeedBoostCharges")
+	assert(t.Offers.ChargesAttribute(t.ById.EssencePackS) == nil)
+end)
+
+test("Строки баффов продают пак: «×5» в названии совпадает с BuffConfig.PackSize", function()
+	local t = setup()
+	local buffConfig = Harness.NewWorld():LoadModule("src/shared/Config/BuffConfig")
+	for _, id in { "MagnetBoost", "SpeedBoost" } do
+		local suffix = `×{buffConfig.Buffs[id].PackSize}`
+		assert(string.find(t.ById[id].DisplayName, suffix, 1, true), `{id}: {t.ById[id].DisplayName}`)
+	end
 end)
 
 test("Кнопка: заглушка ProductId = 0 недоступна при любой цене", function()
@@ -92,15 +101,21 @@ test("Кнопка: Magnet Boost владельцу Авто-сборщика �
 	assert(t.Offers.ButtonState(speed, "Ready", { t.AutoCollector }, false) == "Buy", "Speed Boost геймпасс не заменяет")
 end)
 
-test("Остаток баффа: целые секунды вверх; истёкший, битый или отсутствующий — nil", function()
+test("Заряды в строке пака: сколько есть из потолка; предупреждение, только если пак не влезет целиком", function()
 	local t = setup()
-	local left = t.Offers.BuffSecondsLeft
-	assert(left(1_000_020, 1_000_000) == 20)
-	assert(left(1_000_020, 1_000_019.2) == 1, "0.8 с показываются как 1")
-	assert(left(1_000_020, 1_000_020) == nil, "ровно истёк")
-	assert(left(1_000_000, 1_000_020) == nil, "давно истёк")
-	assert(left(nil, 0) == nil and left("20", 0) == nil)
-	assert(left(0 / 0, 0) == nil and left(math.huge, 0) == nil)
+	local magnet = t.ById.MagnetBoost
+	local info = t.Offers.ChargesInfo(magnet, 3)
+	assert(info.Charges == 3 and info.MaxCharges == 20 and not info.Overflow, "3 + 5 ≤ 20")
+	assert(not t.Offers.ChargesInfo(magnet, 15).Overflow, "15 + 5 = 20 — влезает ровно")
+	assert(t.Offers.ChargesInfo(magnet, 16).Overflow, "16 + 5 > 20 — часть сгорит")
+	assert(t.Offers.ChargesInfo(magnet, 20).Overflow, "на потолке — сгорит весь пак")
+	assert(t.Offers.ButtonState(t.Configured("MagnetBoost"), "Ready", {}, false) == "Buy", "предупреждение кнопку не блокирует")
+
+	for _, junk in { nil, "7", 0 / 0, -2, math.huge } do
+		local j = t.Offers.ChargesInfo(magnet, junk)
+		assert(j.Charges == 0 and not j.Overflow, tostring(junk))
+	end
+	assert(t.Offers.ChargesInfo(t.ById.EssencePackS, 3) == nil, "пак Эссенции — без зарядов")
 end)
 
 return tests

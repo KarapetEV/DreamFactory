@@ -559,10 +559,6 @@ local function productId(config, id: string): number
 	error(`нет продукта {id}`)
 end
 
-local function osTime(world): number
-	return 1_000_000 + math.floor(world.Now)
-end
-
 test("DevProductConfig: Reward.Kind Buff с неизвестным BuffId роняет загрузку", function()
 	local world = Harness.NewWorld()
 	world.SourcePatches["src/shared/Config/DevProductConfig"] = function(source: string): string
@@ -575,50 +571,58 @@ test("DevProductConfig: Reward.Kind Buff с неизвестным BuffId рон
 end)
 
 for _, buffId in { "MagnetBoost", "SpeedBoost" } do
-	test(`{buffId}: покупка продлевает Buffs.{buffId}ExpiresAt на 20 с; повтор доставки не продлевает`, function()
+	test(`{buffId}: покупка начисляет пак Buffs.{buffId}Charges (+5), бафф не запускает; повтор доставки не начисляет`, function()
 		local t = setup()
 		local id = productId(t.Config, buffId)
-		local field = `{buffId}ExpiresAt`
-		local start = osTime(t.World)
+		local field = `{buffId}Charges`
 
 		assert(t.Server.Receipt(receipt(42, "b-1", id), 1) == GRANTED)
-		assert(t.Data.Buffs[field] == start + 20, tostring(t.Data.Buffs[field]))
-		assert(t.World.Records.Player_42.Data.Buffs[field] == start + 20, "срок баффа уже в DataStore")
+		assert(t.Data.Buffs[field] == 5, tostring(t.Data.Buffs[field]))
+		assert(t.Data.Buffs[`{buffId}ExpiresAt`] == nil, "время не пошло — активирует игрок")
+		assert(t.World.Records.Player_42.Data.Buffs[field] == 5, "заряды уже в DataStore")
 		assert(logRecord(t.World, "b-1").Product == buffId, "лог квитанции записан")
 		assert(t.Data.Currency.Essence == t.StartEssence, "Эссенция не тронута")
 
 		for _ = 1, 3 do
 			assert(t.Server.Receipt(receipt(42, "b-1", id), 1) == GRANTED, "повтор закрывается")
 		end
-		assert(t.Data.Buffs[field] == start + 20, "повтор доставки не продлил бафф")
+		assert(t.Data.Buffs[field] == 5, "повтор доставки не начислил второй пак")
 
-		-- Новая покупка того же продукта, пока бафф действует, — стекинг продлением.
 		assert(t.Server.Receipt(receipt(42, "b-2", id), 1) == GRANTED)
-		assert(t.Data.Buffs[field] == start + 40, `вторая покупка: +20, {t.Data.Buffs[field] - start}`)
+		assert(t.Data.Buffs[field] == 10, `вторая покупка: ещё пак, {t.Data.Buffs[field]}`)
 		assert(#t.Data.Monetization.ProcessedReceipts == 2)
 	end)
 end
 
-test("Бафф: сбой сохранения профиля — NotProcessedYet, повтор досохраняет без второго продления", function()
+test("Бафф на потолке зарядов: квитанция закрывается (PurchaseGranted), избыток сгорает", function()
 	local t = setup()
 	local id = productId(t.Config, "SpeedBoost")
-	local start = osTime(t.World)
+	t.Data.Buffs.SpeedBoostCharges = 18
+	assert(t.Server.Receipt(receipt(42, "b-cap", id), 1) == GRANTED)
+	assert(t.Data.Buffs.SpeedBoostCharges == 20, "18 + 5 зажато в 20")
+	assert(t.Server.Receipt(receipt(42, "b-cap-2", id), 1) == GRANTED, "на потолке — тоже выдана")
+	assert(t.Data.Buffs.SpeedBoostCharges == 20)
+	assert(logRecord(t.World, "b-cap-2"), "квитанция закрыта в логе — Roblox не повторит")
+end)
+
+test("Бафф: сбой сохранения профиля — NotProcessedYet, повтор досохраняет без второго пака", function()
+	local t = setup()
+	local id = productId(t.Config, "SpeedBoost")
 	failKeys(t.World, "UpdateAsync", "Player_")
 	assert(t.Server.Receipt(receipt(42, "b-save", id), 1) == NOT_YET)
-	assert(t.World.Records.Player_42.Data.Buffs.SpeedBoostExpiresAt == nil, "в DataStore ещё ничего")
+	assert(t.World.Records.Player_42.Data.Buffs.SpeedBoostCharges == 0, "в DataStore ещё ничего")
 	assert(logRecord(t.World, "b-save") == nil, "лог не пишется раньше профиля")
 	assert(t.Server.Receipt(receipt(42, "b-save", id), 1) == NOT_YET, "DataStore ещё лежит")
 
 	t.World.StoreError = nil
 	assert(t.Server.Receipt(receipt(42, "b-save", id), 1) == GRANTED)
-	assert(t.Data.Buffs.SpeedBoostExpiresAt == start + 20, "продлено ровно один раз")
-	assert(t.World.Records.Player_42.Data.Buffs.SpeedBoostExpiresAt == start + 20)
+	assert(t.Data.Buffs.SpeedBoostCharges == 5, "начислено ровно один раз")
+	assert(t.World.Records.Player_42.Data.Buffs.SpeedBoostCharges == 5)
 end)
 
-test("Бафф: профиль сохранён, лог — нет, игрок перешёл на другой сервер — без второго продления", function()
+test("Бафф: профиль сохранён, лог — нет, игрок перешёл на другой сервер — без второго пака", function()
 	local t = setup()
 	local id = productId(t.Config, "MagnetBoost")
-	local start = osTime(t.World)
 	failKeys(t.World, "UpdateAsync", "Receipt_")
 	assert(t.Server.Receipt(receipt(42, "b-move", id), 1) == NOT_YET)
 	t.World.StoreError = nil
@@ -626,13 +630,13 @@ test("Бафф: профиль сохранён, лог — нет, игрок �
 
 	local serverB = newServer(t.World, t.Config)
 	local dataB = serverB.Load(t.Player)
-	assert(dataB.Buffs.MagnetBoostExpiresAt == start + 20, "срок баффа переехал с профилем")
+	assert(dataB.Buffs.MagnetBoostCharges == 5, "заряды переехали с профилем")
 	assert(serverB.Receipt(receipt(42, "b-move", id), 1) == GRANTED)
-	assert(dataB.Buffs.MagnetBoostExpiresAt == start + 20, "маркер в профиле не дал продлить второй раз")
+	assert(dataB.Buffs.MagnetBoostCharges == 5, "маркер в профиле не дал начислить второй раз")
 	assert(logRecord(t.World, "b-move"), "лог дописан новым сервером")
 end)
 
-test("Бафф: битый раздел Buffs — NotProcessedYet без маркера; после починки — выдача одна", function()
+test("Бафф: битые заряды или раздел Buffs — NotProcessedYet без маркера; после починки — выдача одна", function()
 	local t = setup()
 	local id = productId(t.Config, "SpeedBoost")
 	t.Data.Buffs = "сломано"
@@ -640,10 +644,13 @@ test("Бафф: битый раздел Buffs — NotProcessedYet без мар�
 	assert(#t.Data.Monetization.ProcessedReceipts == 0, "маркер без выдачи не ставится")
 	assert(logRecord(t.World, "b-bad") == nil)
 
-	t.Data.Buffs = {}
-	local now = osTime(t.World)
+	t.Data.Buffs = { MagnetBoostCharges = 0, SpeedBoostCharges = 0 / 0 }
+	assert(t.Server.Receipt(receipt(42, "b-bad", id), 1) == NOT_YET, "NaN в зарядах — тоже ждём")
+	assert(#t.Data.Monetization.ProcessedReceipts == 0)
+
+	t.Data.Buffs.SpeedBoostCharges = 0
 	assert(t.Server.Receipt(receipt(42, "b-bad", id), 1) == GRANTED)
-	assert(t.Data.Buffs.SpeedBoostExpiresAt == now + 20)
+	assert(t.Data.Buffs.SpeedBoostCharges == 5)
 end)
 
 return tests

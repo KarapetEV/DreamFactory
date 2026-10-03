@@ -38,7 +38,7 @@ local STORE_NAME = "PlayerProfiles"
 local AUTOSAVE_INTERVAL = 4 * 60
 
 -- Поднимать на 1 при любом изменении структуры PlayerProfile + добавлять миграцию ниже.
-local CURRENT_SCHEMA_VERSION = 10
+local CURRENT_SCHEMA_VERSION = 11
 
 --[[
 	MIGRATIONS[n] переводит данные со SchemaVersion n на n + 1, мутируя таблицу на месте.
@@ -75,6 +75,8 @@ local CURRENT_SCHEMA_VERSION = 10
 	неуязвима; ошибка в пользу цели, по-другому базу окна задним числом не восстановить.
 	9 → 10: временные платные баффы. Раздел Buffs (пустой: баффов ещё не покупали) дозаполнит
 	reconcile(); Collection.RadiusLevel остаётся как есть — апгрейд снят с продажи и не читается.
+	10 → 11: модель зарядов баффов. Buffs.MagnetBoostCharges / SpeedBoostCharges = 0 дозаполнит
+	reconcile(); ExpiresAt не трогаем — бафф, купленный по старой модели, доработает свой срок.
 
 	Пример на будущее:
 	[1] = function(data)
@@ -110,6 +112,7 @@ local MIGRATIONS: { [number]: (data: any) -> () } = {
 	[7] = function(_data: any) end,
 	[8] = function(_data: any) end,
 	[9] = function(_data: any) end,
+	[10] = function(_data: any) end,
 }
 
 for version = 0, CURRENT_SCHEMA_VERSION - 1 do
@@ -201,6 +204,8 @@ function DataSystem.BuildDefaultProfile(): PlayerProfile
 		Buffs = {
 			MagnetBoostExpiresAt = nil,
 			SpeedBoostExpiresAt = nil,
+			MagnetBoostCharges = 0,
+			SpeedBoostCharges = 0,
 		},
 		Meta = {
 			FirstJoinAt = now,

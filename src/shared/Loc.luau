@@ -61,11 +61,14 @@ Loc.Strings = {
 	["ShopUI.SoonButton"] = { ru = "Скоро", en = "Soon" },
 	["ShopUI.SoonPrice"] = { ru = "Цена появится позже", en = "Price coming later" },
 	["ShopUI.ProductNotConfigured"] = { ru = "Продукт не настроен", en = "Product not set up" },
-	["ShopUI.BuffActive"] = { ru = "активен ещё %d с", en = "active for %d s" },
+	["ShopUI.Charges"] = { ru = "зарядов %d/%d", en = "charges %d/%d" },
+	["ShopUI.ChargesOverflow"] = { ru = "⚠ часть сгорит", en = "⚠ excess is lost" },
 	["ShopUI.IncludedInPass"] = { ru = "Есть в геймпассе", en = "In your pass" },
 
 	-- BuffIcons
 	["BuffIcons.SecondsLeft"] = { ru = "%d с", en = "%ds" },
+	["BuffIcons.Ready"] = { ru = "Готов", en = "Ready" },
+	["BuffIcons.Pending"] = { ru = "...", en = "..." },
 
 	-- PetInventoryUI
 	["PetInventoryUI.Title"] = { ru = "Питомцы", en = "Pets" },

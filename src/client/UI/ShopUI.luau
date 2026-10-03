@@ -13,9 +13,10 @@
 	  (состав и состояние кнопки — чистый OneTimeOffers). Цена — живая, GetProductInfo с
 	  Enum.InfoType.Product; покупка — MarketplaceService:PromptProductPurchase, без RemoteEvent:
 	  выдачу делает сервер по квитанции Roblox (ProcessReceipt), клиент ничего не докладывает.
-	  Покупать можно повторно; у действующего баффа — остаток «активен ещё N с» по атрибуту игрока
-	  (Attributes.<Id>ExpiresAt, пишет BuffSystem), повторная покупка его продлевает. Magnet Boost
-	  владельцу Авто-сборщика не предлагается. Вкладка прокручивается.
+	  Покупать можно повторно. Строка баффа продаёт пак зарядов (активирует их игрок из HUD,
+	  BuffIcons); рядом с ценой — «зарядов N/Max» по атрибуту игрока (Attributes.<Id>Charges, пишет
+	  BuffSystem) и предупреждение, если пак не влезет под потолок целиком (кнопку это не
+	  блокирует). Magnet Boost владельцу Авто-сборщика не предлагается. Вкладка прокручивается.
 	- «Сезонный пропуск»: статичные позиции-заглушки с неактивными кнопками «Скоро».
 
 	Клиент ничего не решает о владении: «Куплено» = Id есть в последнем снимке сервера.
@@ -26,7 +27,6 @@
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
 
 local Types = require(ReplicatedStorage.shared.Types)
 local Loc = require(ReplicatedStorage.shared.Loc)
@@ -65,7 +65,8 @@ local TEXT = {
 	SoonButton = Loc.Get("ShopUI.SoonButton"),
 	SoonPrice = Loc.Get("ShopUI.SoonPrice"),
 	ProductNotConfigured = Loc.Get("ShopUI.ProductNotConfigured"),
-	BuffActive = Loc.Get("ShopUI.BuffActive"),
+	Charges = Loc.Get("ShopUI.Charges"),
+	ChargesOverflow = Loc.Get("ShopUI.ChargesOverflow"),
 	IncludedInPass = Loc.Get("ShopUI.IncludedInPass"),
 }
 
@@ -76,8 +77,6 @@ local PLACEHOLDERS: { [string]: { string } } = {
 
 -- После клика «Купить» кнопка заблокирована на это время (окно покупки открывает Roblox).
 local PROMPT_DEBOUNCE = 2
--- Как часто обновлять остаток действующего баффа, пока магазин открыт (сек).
-local BUFF_TIMER_INTERVAL = 0.5
 
 local ROW_HEIGHT = 56
 local COLOR_PANEL = Color3.fromRGB(30, 25, 50)
@@ -104,7 +103,7 @@ type ProductRow = {
 	Product: DevProductDefinition,
 	Price: PriceState,
 	PromptLockedUntil: number,
-	BuffAttribute: string?, -- атрибут игрока со сроком баффа; nil — не бафф
+	ChargesAttribute: string?, -- атрибут игрока с зарядами баффа; nil — не бафф
 	PriceLabel: TextLabel,
 	Button: TextButton,
 }
@@ -213,13 +212,14 @@ end
 local function refreshProductRow(row: ProductRow)
 	local product = row.Product
 	local text = if product.ProductId == 0 then TEXT.ProductNotConfigured else priceText(row.Price)
-	if row.BuffAttribute then
-		local left = OneTimeOffers.BuffSecondsLeft(
-			Players.LocalPlayer:GetAttribute(row.BuffAttribute),
-			Workspace:GetServerTimeNow()
-		)
-		if left then
-			text ..= " · " .. string.format(TEXT.BuffActive, left)
+	local attribute = row.ChargesAttribute
+	local info = if attribute
+		then OneTimeOffers.ChargesInfo(product, Players.LocalPlayer:GetAttribute(attribute))
+		else nil
+	if info then
+		text ..= " · " .. string.format(TEXT.Charges, info.Charges, info.MaxCharges)
+		if info.Overflow then
+			text ..= " · " .. TEXT.ChargesOverflow
 		end
 	end
 	row.PriceLabel.Text = text
@@ -422,7 +422,7 @@ local function build(): ScreenGui
 			Product = product,
 			Price = { Status = "Idle", Robux = nil },
 			PromptLockedUntil = 0,
-			BuffAttribute = OneTimeOffers.BuffAttribute(product),
+			ChargesAttribute = OneTimeOffers.ChargesAttribute(product),
 			PriceLabel = makeLabel(oneTimeFrame, "", UDim2.fromOffset(250, 18), UDim2.fromOffset(8, y + 26)),
 			Button = makeButton(oneTimeFrame, UDim2.fromOffset(120, 36), UDim2.fromOffset(258, y + 4)),
 		}
@@ -466,24 +466,16 @@ function ShopUI.Init(snapshotSource: SnapshotSource)
 	source.SnapshotChanged:Connect(refreshAll)
 	source.AddMenuButton(TEXT.Menu, ShopUI.Toggle)
 
-	-- Срок баффа сменился (покупка, истечение) — сразу; остаток тикает, пока вкладка открыта.
+	-- Заряды сменились (покупка, активация) — строка пака сразу.
 	local localPlayer = Players.LocalPlayer
 	for _, row in productRows do
-		local attribute = row.BuffAttribute
+		local attribute = row.ChargesAttribute
 		if attribute then
 			localPlayer:GetAttributeChangedSignal(attribute):Connect(function()
 				refreshProductRow(row)
 			end)
 		end
 	end
-	task.spawn(function()
-		while true do
-			task.wait(BUFF_TIMER_INTERVAL)
-			if gui.Enabled and currentTab == "OneTime" then
-				refreshProducts()
-			end
-		end
-	end)
 end
 
 return ShopUI

@@ -87,6 +87,25 @@ test("BuffTimer: нет атрибута, мусор, NaN, inf, прошлое �
 	assert(s.Visible and near(s.Grey, 1 / 20))
 end)
 
+test("BuffTimer.ButtonState: есть заряд — Готов; действует — таймер без клика; клик отправлен — ждём; нет зарядов — скрыта", function()
+	local bt = load(BUFF_TIMER)
+	assert(bt.ButtonState(3, false, false) == "Ready")
+	assert(bt.ButtonState(3, false, true) == "Pending", "повторный клик до ответа сервера не шлём")
+	assert(bt.ButtonState(3, true, false) == "Active")
+	assert(bt.ButtonState(3, true, true) == "Active", "сервер ответил (срок пришёл) — ожидание снято")
+	assert(bt.ButtonState(0, true, false) == "Active", "последний заряд потрачен — таймер всё равно виден")
+	assert(bt.ButtonState(0, false, false) == "Hidden", "кончилось и зарядов нет — иконки нет")
+	assert(bt.ButtonState(0, false, true) == "Hidden")
+end)
+
+test("BuffTimer.Charges: целое ≥ 0 из атрибута; мусор — 0", function()
+	local bt = load(BUFF_TIMER)
+	assert(bt.Charges(7) == 7 and bt.Charges(0) == 0)
+	for _, junk in { nil, "7", 2.5, -1, 0 / 0, math.huge } do
+		assert(bt.Charges(junk) == 0, tostring(junk))
+	end
+end)
+
 test("VisualConfig.BuffIcons: иконка у каждого баффа; без иконки или лишняя — конфиг не грузится", function()
 	local config = load("src/shared/Config/VisualConfig")
 	local buffConfig = load("src/shared/Config/BuffConfig")

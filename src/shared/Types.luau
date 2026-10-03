@@ -84,11 +84,14 @@ export type PlayerProfile = {
 		BattlePassXP: number, -- XP внутри текущего тира (0 на MaxTier)
 		BattlePassPremium: boolean, -- премиум-ветка куплена в сезоне BattlePassSeasonId
 	},
-	-- Временные платные баффы (BuffSystem, BuffConfig): os.time() конца баффа, nil — не покупался.
-	-- Стекинг — продление: max(текущий, now) + Duration. Истёкшее значение не стирается.
+	-- Временные платные баффы (BuffSystem, BuffConfig). Покупка начисляет заряды (Charges, целое
+	-- 0..MaxCharges), активация из HUD тратит заряд и ставит ExpiresAt = os.time() конца действия
+	-- (nil — не активировался). Истёкшее значение не стирается.
 	Buffs: {
 		MagnetBoostExpiresAt: number?,
 		SpeedBoostExpiresAt: number?,
+		MagnetBoostCharges: number,
+		SpeedBoostCharges: number,
 	},
 	Meta: {
 		FirstJoinAt: number,

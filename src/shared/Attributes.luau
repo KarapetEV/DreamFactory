@@ -16,7 +16,9 @@
 	  ShieldExpiresAt  — os.time() конца PvP-щита, nil — щита нет (PvPRaidSystem);
 	  RaidedCount      — сколько раз игрока ограбили за сессию на этом сервере (PvPRaidSystem);
 	  MagnetBoostExpiresAt / SpeedBoostExpiresAt — os.time() конца действующего баффа, nil — баффа
-	                     нет (BuffSystem; магазин показывает остаток по Workspace:GetServerTimeNow()).
+	                     нет (BuffSystem; HUD показывает остаток по Workspace:GetServerTimeNow());
+	  MagnetBoostCharges / SpeedBoostCharges — сколько зарядов баффа у игрока (BuffSystem; HUD и
+	                     магазин), nil — данные повреждены.
 ]]
 
 return {
@@ -29,4 +31,6 @@ return {
 	RaidedCount = "RaidedCount",
 	MagnetBoostExpiresAt = "MagnetBoostExpiresAt",
 	SpeedBoostExpiresAt = "SpeedBoostExpiresAt",
+	MagnetBoostCharges = "MagnetBoostCharges",
+	SpeedBoostCharges = "SpeedBoostCharges",
 }

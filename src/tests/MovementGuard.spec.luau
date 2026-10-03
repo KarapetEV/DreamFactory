@@ -30,6 +30,10 @@ local function setup(init: boolean?)
 				return profiles[p]
 			end,
 		},
+		-- BuffSystem.Init подписывается на ActivateBuff; запросы клиента здесь не нужны.
+		["src/shared/Remotes"] = {
+			ActivateBuff = { OnServerEvent = { Connect = function() end } },
+		},
 	})
 	local guard = load("src/server/Services/MovementGuard")
 	local config = load("src/server/Config/MovementGuardConfig")
@@ -435,6 +439,14 @@ local function withBuffs(t)
 	return buffs, t.Load("src/shared/Config/BuffConfig")
 end
 
+-- Игроку — один заряд Speed Boost и его активация (как клик по иконке в HUD).
+local function activateSpeed(t, buffs, player)
+	local data = { Buffs = { SpeedBoostCharges = 1 } }
+	t.Profiles[player] = data
+	assert(buffs.Activate(player, "SpeedBoost") == nil, "Speed Boost запущен")
+	return data
+end
+
 -- Бег по X со скоростью speed studs/s шагами по 0.1 с; после каждого шага — запрос позиции.
 local function run(t, player, root, speed: number, seconds: number)
 	for _ = 1, math.round(seconds / 0.1) do
@@ -464,9 +476,7 @@ test("Speed Boost: бег на скорости баффа с лагом реп�
 	local speed = buffConfig.Buffs.SpeedBoost.WalkSpeed
 	assert(speed == 32, "тест рассчитан на WalkSpeed баффа 32")
 	local player, root, humanoid = t.Join(1)
-	local data = { Buffs = {} }
-	t.Profiles[player] = data
-	assert(buffs.Grant(player, data, "SpeedBoost"))
+	activateSpeed(t, buffs, player)
 	assert(humanoid.WalkSpeed == speed)
 
 	run(t, player, root, speed, 10)
@@ -483,12 +493,11 @@ test("Speed Boost истёк: грейс SpeedDropGrace на стыке, дал�
 	local buffs, buffConfig = withBuffs(t)
 	local speed = buffConfig.Buffs.SpeedBoost.WalkSpeed
 	local player, root, humanoid = t.Join(1)
-	local data = { Buffs = {} }
-	t.Profiles[player] = data
-	assert(buffs.Grant(player, data, "SpeedBoost")) -- истекает на 20-й секунде
+	activateSpeed(t, buffs, player) -- истекает на 60-й секунде (BuffConfig Duration)
+	assert(buffConfig.Buffs.SpeedBoost.Duration == 60, "тест рассчитан на Duration 60")
 
-	-- Бафф снят на ~20.0 с, персонаж по инерции ещё бежит быстро и ловит лаг — в пределах грейса.
-	run(t, player, root, speed, 20.5)
+	-- Бафф снят на ~60.0 с, персонаж по инерции ещё бежит быстро и ловит лаг — в пределах грейса.
+	run(t, player, root, speed, 60.5)
 	assert(humanoid.WalkSpeed == buffConfig.BaseWalkSpeed, "WalkSpeed вернулся к базовой")
 	lagSpike(t, player, root, speed, 0.6)
 	assert(t.GuardWarnings() == 0, "на стыке истечения честного игрока не флагает")
@@ -503,9 +512,7 @@ test("Speed Boost не пропускает телепорт: скачок да�
 	local t = setup()
 	local buffs = withBuffs(t)
 	local player, root = t.Join(1)
-	local data = { Buffs = {} }
-	t.Profiles[player] = data
-	assert(buffs.Grant(player, data, "SpeedBoost"))
+	activateSpeed(t, buffs, player)
 	run(t, player, root, 32, 2)
 	local x = root.Position.X
 
